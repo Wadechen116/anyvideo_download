@@ -1,0 +1,15 @@
+# 建置產物：每次建置都會變，不進版本控制
+qt/build/
+qt/build-ninja/
+csharp/bin/
+csharp/obj/
+
+# Python 的位元組碼快取
+__pycache__/
+*.py[cod]
+
+# 其他可由原始碼重新產生的東西
+*.obj
+*.pdb
+*.ilk
+*.log

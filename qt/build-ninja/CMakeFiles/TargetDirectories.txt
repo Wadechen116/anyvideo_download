@@ -1,5 +1,0 @@
-C:/Users/user/swork/anyvideo_download/qt/build-ninja/CMakeFiles/AnyVideoDownload.dir
-C:/Users/user/swork/anyvideo_download/qt/build-ninja/CMakeFiles/edit_cache.dir
-C:/Users/user/swork/anyvideo_download/qt/build-ninja/CMakeFiles/rebuild_cache.dir
-C:/Users/user/swork/anyvideo_download/qt/build-ninja/CMakeFiles/AnyVideoDownload_autogen_timestamp_deps.dir
-C:/Users/user/swork/anyvideo_download/qt/build-ninja/CMakeFiles/AnyVideoDownload_autogen.dir

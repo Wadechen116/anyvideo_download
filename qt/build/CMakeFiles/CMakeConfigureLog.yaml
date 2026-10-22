@@ -1,0 +1,403 @@
+
+---
+events:
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineSystem.cmake:205 (message)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      The system is: Windows - 10.0.26200 - AMD64
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCompilerId.cmake:17 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCompilerId.cmake:64 (__determine_compiler_id_test)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCXXCompiler.cmake:126 (CMAKE_DETERMINE_COMPILER_ID)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Compiling the CXX compiler identification source file "CMakeCXXCompilerId.cpp" succeeded.
+      Compiler:  
+      Build flags: 
+      Id flags:  
+      
+      The output was:
+      0
+      .NET Framework ??MSBuild ? 17.14.23+b0019275e
+      撌脩???撱箇蔭??2026/9/14 銝? 10:48:30??
+      
+      蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\3.29.2\\CompilerIdCXX\\CompilerIdCXX.vcxproj"??
+      PrepareForBuild:
+        甇?撱箇??桅? "Debug\\"??
+        蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+        甇?撱箇??桅? "Debug\\CompilerIdCXX.tlog\\"??
+      InitializeBuildStatus:
+        ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild"??
+        甇?霈???唾? "Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild"??
+      ClCompile:
+        C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /nologo /W0 /WX- /diagnostics:column /Od /D _MBCS /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"Debug\\\\" /Fd"Debug\\vc143.pdb" /external:W0 /Gd /TP /FC /errorReport:queue CMakeCXXCompilerId.cpp
+        CMakeCXXCompilerId.cpp
+      Link:
+        C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:".\\CompilerIdCXX.exe" /INCREMENTAL:NO /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /PDB:".\\CompilerIdCXX.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:".\\CompilerIdCXX.lib" /MACHINE:X64 Debug\\CMakeCXXCompilerId.obj
+        CompilerIdCXX.vcxproj -> C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\3.29.2\\CompilerIdCXX\\CompilerIdCXX.exe
+      PostBuildEvent:
+        for %%i in (cl.exe) do @echo CMAKE_CXX_COMPILER=%%~$PATH:i
+        :VCEnd
+        CMAKE_CXX_COMPILER=C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\Hostx64\\x64\\cl.exe
+      FinalizeBuildStatus:
+        甇??芷瑼? "Debug\\CompilerIdCXX.tlog\\unsuccessfulbuild"??
+        甇?霈???唾? "Debug\\CompilerIdCXX.tlog\\CompilerIdCXX.lastbuildstate"??
+      撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\3.29.2\\CompilerIdCXX\\CompilerIdCXX.vcxproj" (?身?格?) 撱箇蔭摰???
+      
+      撱箇蔭????
+          0 ?郎??
+          0 ?隤?
+      
+      蝬??? 00:00:01.09
+      
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CompilerIdCXX.exe"
+      
+      Compilation of the CXX compiler identification source "CMakeCXXCompilerId.cpp" produced "CompilerIdCXX.vcxproj"
+      
+      The CXX compiler identification is MSVC, found in:
+        C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/3.29.2/CompilerIdCXX/CompilerIdCXX.exe
+      
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCompilerABI.cmake:64 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    checks:
+      - "Detecting CXX compiler ABI info"
+    directories:
+      source: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-ixat2f"
+      binary: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-ixat2f"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+    buildResult:
+      variable: "CMAKE_CXX_ABI_COMPILED"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-ixat2f'
+        
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_6721c.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        .NET Framework ??MSBuild ? 17.14.23+b0019275e
+        撌脩???撱箇蔭??2026/9/14 銝? 10:48:32??
+        
+        蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ixat2f\\cmTC_6721c.vcxproj"??
+        PrepareForBuild:
+          甇?撱箇??桅? "cmTC_6721c.dir\\Debug\\"??
+          蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+          甇?撱箇??桅? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ixat2f\\Debug\\"??
+          甇?撱箇??桅? "cmTC_6721c.dir\\Debug\\cmTC_6721c.tlog\\"??
+        InitializeBuildStatus:
+          ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"cmTC_6721c.dir\\Debug\\cmTC_6721c.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_6721c.dir\\Debug\\cmTC_6721c.tlog\\unsuccessfulbuild"??
+        ClCompile:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_6721c.dir\\Debug\\\\" /Fd"cmTC_6721c.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.29\\Modules\\CMakeCXXCompilerABI.cpp"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35217 for x64
+          Copyright (C) Microsoft Corporation.  ??甈???銝虫??????押\xc2\x80?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /Fo"cmTC_6721c.dir\\Debug\\\\" /Fd"cmTC_6721c.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Program Files\\CMake\\share\\cmake-3.29\\Modules\\CMakeCXXCompilerABI.cpp"
+          CMakeCXXCompilerABI.cpp
+        Link:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ixat2f\\Debug\\cmTC_6721c.exe" /INCREMENTAL /ILK:"cmTC_6721c.dir\\Debug\\cmTC_6721c.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-ixat2f/Debug/cmTC_6721c.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-ixat2f/Debug/cmTC_6721c.lib" /MACHINE:X64  /machine:x64 cmTC_6721c.dir\\Debug\\CMakeCXXCompilerABI.obj
+          cmTC_6721c.vcxproj -> C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ixat2f\\Debug\\cmTC_6721c.exe
+        FinalizeBuildStatus:
+          甇??芷瑼? "cmTC_6721c.dir\\Debug\\cmTC_6721c.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_6721c.dir\\Debug\\cmTC_6721c.tlog\\cmTC_6721c.lastbuildstate"??
+        撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-ixat2f\\cmTC_6721c.vcxproj" (?身?格?) 撱箇蔭摰???
+        
+        撱箇蔭????
+            0 ?郎??
+            0 ?隤?
+        
+        蝬??? 00:00:00.59
+        
+      exitCode: 0
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCompilerABI.cmake:170 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Parsed CXX implicit link information:
+        link line regex: [^( *|.*[/\\])(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?|CMAKE_LINK_STARTFILE-NOTFOUND|([^/\\]+-)?ld|collect2)[^/\\]*( |$)]
+        linker tool regex: [^[ 	]*(->|")?[ 	]*(([^"]*[/\\])?(ld[0-9]*(\\.[a-z]+)?|link\\.exe|lld-link(\\.exe)?))("|,| |$)]
+        linker tool for 'CXX': C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe
+        implicit libs: []
+        implicit objs: []
+        implicit dirs: []
+        implicit fwks: []
+      
+      
+  -
+    kind: "message-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/Internal/CMakeDetermineLinkerId.cmake:40 (message)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeDetermineCompilerABI.cmake:207 (cmake_determine_linker_id)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeTestCXXCompiler.cmake:26 (CMAKE_DETERMINE_COMPILER_ABI)"
+      - "CMakeLists.txt:2 (project)"
+    message: |
+      Running the CXX compiler's linker: "C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/link.exe" "-v"
+      Microsoft (R) Incremental Linker Version 14.44.35217.0
+      Copyright (C) Microsoft Corporation.  All rights reserved.
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CheckCXXSourceCompiles.cmake:52 (cmake_check_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:99 (CHECK_CXX_SOURCE_COMPILES)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:163 (_threads_check_libc)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake:36 (find_dependency)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Dependencies.cmake:24 (_qt_internal_find_third_party_dependencies)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Config.cmake:112 (include)"
+      - "CMakeLists.txt:7 (find_package)"
+    checks:
+      - "Performing Test CMAKE_HAVE_LIBC_PTHREAD"
+    directories:
+      source: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-rms7cf"
+      binary: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-rms7cf"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/extra-cmake-modules/find-modules;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/kwin"
+    buildResult:
+      variable: "CMAKE_HAVE_LIBC_PTHREAD"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-rms7cf'
+        
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_7cb4f.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        .NET Framework ??MSBuild ? 17.14.23+b0019275e
+        撌脩???撱箇蔭??2026/9/14 銝? 10:48:33??
+        
+        蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\cmTC_7cb4f.vcxproj"??
+        PrepareForBuild:
+          甇?撱箇??桅? "cmTC_7cb4f.dir\\Debug\\"??
+          蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+          甇?撱箇??桅? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\Debug\\"??
+          甇?撱箇??桅? "cmTC_7cb4f.dir\\Debug\\cmTC_7cb4f.tlog\\"??
+        InitializeBuildStatus:
+          ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"cmTC_7cb4f.dir\\Debug\\cmTC_7cb4f.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_7cb4f.dir\\Debug\\cmTC_7cb4f.tlog\\unsuccessfulbuild"??
+        ClCompile:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CMAKE_HAVE_LIBC_PTHREAD /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_7cb4f.dir\\Debug\\\\" /Fd"cmTC_7cb4f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\src.cxx"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35217 for x64
+          Copyright (C) Microsoft Corporation.  ??甈???銝虫??????押\xc2\x80?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CMAKE_HAVE_LIBC_PTHREAD /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_7cb4f.dir\\Debug\\\\" /Fd"cmTC_7cb4f.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\src.cxx"
+          src.cxx
+        C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\src.cxx(1,10): error C1083: ?⊥????瑼?: 'pthread.h': No such file or directory [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\cmTC_7cb4f.vcxproj]
+        撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\cmTC_7cb4f.vcxproj" (?身?格?) 撱箇蔭摰? -- 憭望???
+        
+        撱箇蔭憭望???
+        
+        "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\cmTC_7cb4f.vcxproj" (?身?格?) (1) ->
+        (ClCompile ?格?) -> 
+          C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\src.cxx(1,10): error C1083: ?⊥????瑼?: 'pthread.h': No such file or directory [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-rms7cf\\cmTC_7cb4f.vcxproj]
+        
+            0 ?郎??
+            1 ?隤?
+        
+        蝬??? 00:00:00.44
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CheckLibraryExists.cmake:69 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:175 (_threads_check_lib)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake:36 (find_dependency)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Dependencies.cmake:24 (_qt_internal_find_third_party_dependencies)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Config.cmake:112 (include)"
+      - "CMakeLists.txt:7 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthreads"
+    directories:
+      source: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-3enw99"
+      binary: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-3enw99"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/extra-cmake-modules/find-modules;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/kwin"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREADS_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-3enw99'
+        
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_623db.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        .NET Framework ??MSBuild ? 17.14.23+b0019275e
+        撌脩???撱箇蔭??2026/9/14 銝? 10:48:33??
+        
+        蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\cmTC_623db.vcxproj"??
+        PrepareForBuild:
+          甇?撱箇??桅? "cmTC_623db.dir\\Debug\\"??
+          蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+          甇?撱箇??桅? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\Debug\\"??
+          甇?撱箇??桅? "cmTC_623db.dir\\Debug\\cmTC_623db.tlog\\"??
+        InitializeBuildStatus:
+          ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"cmTC_623db.dir\\Debug\\cmTC_623db.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_623db.dir\\Debug\\cmTC_623db.tlog\\unsuccessfulbuild"??
+        ClCompile:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_623db.dir\\Debug\\\\" /Fd"cmTC_623db.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\CheckFunctionExists.cxx"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35217 for x64
+          Copyright (C) Microsoft Corporation.  ??甈???銝虫??????押\xc2\x80?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_623db.dir\\Debug\\\\" /Fd"cmTC_623db.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\CheckFunctionExists.cxx"
+          CheckFunctionExists.cxx
+        Link:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\Debug\\cmTC_623db.exe" /INCREMENTAL /ILK:"cmTC_623db.dir\\Debug\\cmTC_623db.ilk" /NOLOGO pthreads.lib kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-3enw99/Debug/cmTC_623db.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-3enw99/Debug/cmTC_623db.lib" /MACHINE:X64  /machine:x64 cmTC_623db.dir\\Debug\\CheckFunctionExists.obj
+        LINK : fatal error LNK1104: ?⊥???瑼? 'pthreads.lib' [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\cmTC_623db.vcxproj]
+        撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\cmTC_623db.vcxproj" (?身?格?) 撱箇蔭摰? -- 憭望???
+        
+        撱箇蔭憭望???
+        
+        "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\cmTC_623db.vcxproj" (?身?格?) (1) ->
+        (Link ?格?) -> 
+          LINK : fatal error LNK1104: ?⊥???瑼? 'pthreads.lib' [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-3enw99\\cmTC_623db.vcxproj]
+        
+            0 ?郎??
+            1 ?隤?
+        
+        蝬??? 00:00:00.46
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CheckLibraryExists.cmake:69 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:112 (CHECK_LIBRARY_EXISTS)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/FindThreads.cmake:176 (_threads_check_lib)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake:36 (find_dependency)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Dependencies.cmake:24 (_qt_internal_find_third_party_dependencies)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Config.cmake:112 (include)"
+      - "CMakeLists.txt:7 (find_package)"
+    checks:
+      - "Looking for pthread_create in pthread"
+    directories:
+      source: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-juczvj"
+      binary: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-juczvj"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/extra-cmake-modules/find-modules;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/kwin"
+    buildResult:
+      variable: "CMAKE_HAVE_PTHREAD_CREATE"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-juczvj'
+        
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_dbabd.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        .NET Framework ??MSBuild ? 17.14.23+b0019275e
+        撌脩???撱箇蔭??2026/9/14 銝? 10:48:34??
+        
+        蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\cmTC_dbabd.vcxproj"??
+        PrepareForBuild:
+          甇?撱箇??桅? "cmTC_dbabd.dir\\Debug\\"??
+          蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+          甇?撱箇??桅? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\Debug\\"??
+          甇?撱箇??桅? "cmTC_dbabd.dir\\Debug\\cmTC_dbabd.tlog\\"??
+        InitializeBuildStatus:
+          ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"cmTC_dbabd.dir\\Debug\\cmTC_dbabd.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_dbabd.dir\\Debug\\cmTC_dbabd.tlog\\unsuccessfulbuild"??
+        ClCompile:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_dbabd.dir\\Debug\\\\" /Fd"cmTC_dbabd.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\CheckFunctionExists.cxx"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35217 for x64
+          Copyright (C) Microsoft Corporation.  ??甈???銝虫??????押\xc2\x80?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D CHECK_FUNCTION_EXISTS=pthread_create /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_dbabd.dir\\Debug\\\\" /Fd"cmTC_dbabd.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\CheckFunctionExists.cxx"
+          CheckFunctionExists.cxx
+        Link:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\Debug\\cmTC_dbabd.exe" /INCREMENTAL /ILK:"cmTC_dbabd.dir\\Debug\\cmTC_dbabd.ilk" /NOLOGO pthread.lib kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-juczvj/Debug/cmTC_dbabd.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-juczvj/Debug/cmTC_dbabd.lib" /MACHINE:X64  /machine:x64 cmTC_dbabd.dir\\Debug\\CheckFunctionExists.obj
+        LINK : fatal error LNK1104: ?⊥???瑼? 'pthread.lib' [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\cmTC_dbabd.vcxproj]
+        撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\cmTC_dbabd.vcxproj" (?身?格?) 撱箇蔭摰? -- 憭望???
+        
+        撱箇蔭憭望???
+        
+        "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\cmTC_dbabd.vcxproj" (?身?格?) (1) ->
+        (Link ?格?) -> 
+          LINK : fatal error LNK1104: ?⊥???瑼? 'pthread.lib' [C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-juczvj\\cmTC_dbabd.vcxproj]
+        
+            0 ?郎??
+            1 ?隤?
+        
+        蝬??? 00:00:00.46
+        
+      exitCode: 1
+  -
+    kind: "try_compile-v1"
+    backtrace:
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/Internal/CheckSourceCompiles.cmake:101 (try_compile)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CheckCXXSourceCompiles.cmake:52 (cmake_check_source_compiles)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/FindWrapAtomic.cmake:36 (check_cxx_source_compiles)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake:36 (find_dependency)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6Core/Qt6CoreDependencies.cmake:30 (_qt_internal_find_third_party_dependencies)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6Core/Qt6CoreConfig.cmake:40 (include)"
+      - "C:/Program Files/CMake/share/cmake-3.29/Modules/CMakeFindDependencyMacro.cmake:76 (find_package)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/QtPublicDependencyHelpers.cmake:111 (find_dependency)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6Widgets/Qt6WidgetsDependencies.cmake:39 (_qt_internal_find_qt_dependencies)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6Widgets/Qt6WidgetsConfig.cmake:40 (include)"
+      - "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/Qt6Config.cmake:157 (find_package)"
+      - "CMakeLists.txt:7 (find_package)"
+    checks:
+      - "Performing Test HAVE_STDATOMIC"
+    directories:
+      source: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-x2h63q"
+      binary: "C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-x2h63q"
+    cmakeVariables:
+      CMAKE_CXX_FLAGS: "/DWIN32 /D_WINDOWS /EHsc"
+      CMAKE_CXX_FLAGS_DEBUG: "/Zi /Ob0 /Od /RTC1"
+      CMAKE_EXE_LINKER_FLAGS: "/machine:x64"
+      CMAKE_MODULE_PATH: "C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/extra-cmake-modules/find-modules;C:/Qt/6.5.1/msvc2019_64/lib/cmake/Qt6/3rdparty/kwin"
+    buildResult:
+      variable: "HAVE_STDATOMIC"
+      cached: true
+      stdout: |
+        Change Dir: 'C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-x2h63q'
+        
+        Run Build Command(s): "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" cmTC_19e82.vcxproj /p:Configuration=Debug /p:Platform=x64 /p:VisualStudioVersion=17.0 /v:n
+        .NET Framework ??MSBuild ? 17.14.23+b0019275e
+        撌脩???撱箇蔭??2026/9/14 銝? 10:48:35??
+        
+        蝭\xc2\x80暺?1 (?身?格?) 銝?撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\cmTC_19e82.vcxproj"??
+        PrepareForBuild:
+          甇?撱箇??桅? "cmTC_19e82.dir\\Debug\\"??
+          蝯??撓?箏歇??楊霅臬閮箸?撘?撠??隤日?撅扎\xc2\x80??\xc2\x80閰喟敦鞈?嚗?? https://aka.ms/cpp/structured-output??
+          甇?撱箇??桅? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\Debug\\"??
+          甇?撱箇??桅? "cmTC_19e82.dir\\Debug\\cmTC_19e82.tlog\\"??
+        InitializeBuildStatus:
+          ?望??鈭?"AlwaysCreate"嚗?甇斗迤?典遣蝡?"cmTC_19e82.dir\\Debug\\cmTC_19e82.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_19e82.dir\\Debug\\cmTC_19e82.tlog\\unsuccessfulbuild"??
+        ClCompile:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\CL.exe /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D HAVE_STDATOMIC /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_19e82.dir\\Debug\\\\" /Fd"cmTC_19e82.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\src.cxx"
+          Microsoft (R) C/C++ Optimizing Compiler Version 19.44.35217 for x64
+          Copyright (C) Microsoft Corporation.  ??甈???銝虫??????押\xc2\x80?
+          cl /c /Zi /W1 /WX- /diagnostics:column /Od /Ob0 /D _MBCS /D WIN32 /D _WINDOWS /D HAVE_STDATOMIC /D "CMAKE_INTDIR=\\"Debug\\"" /Gm- /EHsc /RTC1 /MDd /GS /fp:precise /Zc:wchar_t /Zc:forScope /Zc:inline /std:c++17 /Fo"cmTC_19e82.dir\\Debug\\\\" /Fd"cmTC_19e82.dir\\Debug\\vc143.pdb" /external:W1 /Gd /TP /errorReport:queue "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\src.cxx"
+          src.cxx
+        Link:
+          C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Tools\\MSVC\\14.44.35207\\bin\\HostX64\\x64\\link.exe /ERRORREPORT:QUEUE /OUT:"C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\Debug\\cmTC_19e82.exe" /INCREMENTAL /ILK:"cmTC_19e82.dir\\Debug\\cmTC_19e82.ilk" /NOLOGO kernel32.lib user32.lib gdi32.lib winspool.lib shell32.lib ole32.lib oleaut32.lib uuid.lib comdlg32.lib advapi32.lib /MANIFEST /MANIFESTUAC:"level='asInvoker' uiAccess='false'" /manifest:embed /DEBUG /PDB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-x2h63q/Debug/cmTC_19e82.pdb" /SUBSYSTEM:CONSOLE /TLBID:1 /DYNAMICBASE /NXCOMPAT /IMPLIB:"C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/CMakeScratch/TryCompile-x2h63q/Debug/cmTC_19e82.lib" /MACHINE:X64  /machine:x64 cmTC_19e82.dir\\Debug\\src.obj
+          cmTC_19e82.vcxproj -> C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\Debug\\cmTC_19e82.exe
+        FinalizeBuildStatus:
+          甇??芷瑼? "cmTC_19e82.dir\\Debug\\cmTC_19e82.tlog\\unsuccessfulbuild"??
+          甇?霈???唾? "cmTC_19e82.dir\\Debug\\cmTC_19e82.tlog\\cmTC_19e82.lastbuildstate"??
+        撠? "C:\\Users\\user\\swork\\anyvideo_download\\qt\\build\\CMakeFiles\\CMakeScratch\\TryCompile-x2h63q\\cmTC_19e82.vcxproj" (?身?格?) 撱箇蔭摰???
+        
+        撱箇蔭????
+            0 ?郎??
+            0 ?隤?
+        
+        蝬??? 00:00:00.69
+        
+      exitCode: 0
+...

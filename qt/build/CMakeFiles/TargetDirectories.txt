@@ -1,0 +1,3 @@
+C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/AnyVideoDownload.dir
+C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/ALL_BUILD.dir
+C:/Users/user/swork/anyvideo_download/qt/build/CMakeFiles/ZERO_CHECK.dir

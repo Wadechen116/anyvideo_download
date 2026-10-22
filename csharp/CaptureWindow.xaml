@@ -1,0 +1,52 @@
+<Window x:Class="AnyVideoDownload.CaptureWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="從瀏覽器擷取影片" Width="760" Height="560" MinWidth="640" MinHeight="460"
+        WindowStartupLocation="CenterOwner"
+        FontFamily="Microsoft JhengHei UI" FontSize="13.333"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Padding" Value="12,3" />
+            <Setter Property="Margin" Value="0,0,6,0" />
+            <Setter Property="MinWidth" Value="64" />
+        </Style>
+    </Window.Resources>
+    <Grid Margin="12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.Row="0" TextWrapping="Wrap">
+            網站解析不了、但瀏覽器能播時使用：<LineBreak />
+            ① 按「開啟瀏覽器」。 ② 在開出來的瀏覽器裡播放影片（需要登入的在那裡登入一次，之後會記住）。<LineBreak />
+            ③ 這裡顯示「偵測到影音」後，按「下載擷取到的影片」。程式會自動挑出最高畫質的影像與最高音質的聲音並合併。<LineBreak />
+            有 DRM 保護的內容（Netflix 等）抓不到可用的資料。
+        </TextBlock>
+
+        <DockPanel Grid.Row="1" Margin="0,10,0,0">
+            <Button x:Name="BtnOpen" DockPanel.Dock="Right" Margin="6,0,0,0" Content="開啟瀏覽器" Click="OpenBrowser_Click" />
+            <TextBox x:Name="UrlBox" VerticalContentAlignment="Center" AutomationProperties.Name="要先開啟的網頁網址" />
+        </DockPanel>
+
+        <TextBlock x:Name="LblFound" Grid.Row="2" Margin="0,10,0,0" FontWeight="Bold" Text="尚未偵測到影音" />
+
+        <StackPanel Grid.Row="3" Orientation="Horizontal" Margin="0,8,0,0">
+            <Button x:Name="BtnDownload" Content="下載擷取到的影片" IsEnabled="False" Click="Download_Click" />
+            <Button x:Name="BtnStop" Content="停止" IsEnabled="False" Click="Stop_Click" />
+            <Button Content="關閉" Click="Close_Click" />
+        </StackPanel>
+
+        <ProgressBar x:Name="Bar" Grid.Row="4" Height="16" Minimum="0" Maximum="100" Margin="0,10,0,2" />
+        <TextBlock x:Name="LblStatus" Grid.Row="5" TextWrapping="Wrap" Foreground="#666666" />
+
+        <TextBox x:Name="LogBox" Grid.Row="6" Margin="0,8,0,0" IsReadOnly="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" AutomationProperties.Name="紀錄" />
+    </Grid>
+</Window>

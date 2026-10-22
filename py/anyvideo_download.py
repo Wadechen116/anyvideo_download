@@ -462,6 +462,133 @@ def plan_retry(kind: str, tried: set[str]) -> tuple[dict, str] | None:
     return None
 
 
+# ─── 下載前的設定防呆 ───────────────────────────────────────────────────────
+#
+# 按「開始下載」前先檢查：哪些設定其實做不到、會悄悄被略過、或根本寫不進去。每一項都是「確定有問題」才提醒（不是你刻意的選擇都要念一次），
+# 能修的附上修法，修法以「畫質最高又不損耗」為優先（例如改成 mkv：什麼都裝得下，只是重新封裝，不必重新編碼）。
+#   致命（不能照原設定做）：dir_admin_only 儲存位置在需要管理員權限的地方、dir_not_writable 儲存位置寫不進去
+#   提醒：disk_low 磁碟空間不到 2 GB、compat_not_kept 相容優先卻選了 webm／avi（做不到 H.264）、
+#         subs_dropped／thumb_dropped 勾了嵌入字幕／封面但容器不支援（會悄悄不嵌）
+# 規則與 qt/src/guard.cpp、csharp/Guard.cs 相同（tests/guard_flow.py 三個版本跑同一批案例）。
+
+import tempfile
+from dataclasses import replace
+
+GUARD_MIN_FREE_BYTES = 2 * 1024 ** 3
+
+
+def _norm_path(raw: str) -> str:
+    out = raw.replace("\\", "/").lower()
+    while len(out) > 1 and out.endswith("/"):
+        out = out[:-1]
+    if len(out) >= 4 and out[:4] in ("//?/", "//./"):                  # \\?\C:\... 與 \\.\C:\... 是同一個磁碟路徑的另一種寫法
+        out = out[4:]
+    if len(out) >= 6 and out.startswith("/mnt/") and "a" <= out[5] <= "z" and (len(out) == 6 or out[6] == "/"):   # WSL 的 /mnt/c/windows 就是 c:/windows
+        out = out[5] + ":" + out[6:]
+    return out
+
+
+def _starts_with_folder(path: str, folder: str) -> bool:
+    return path == folder or (len(path) > len(folder) and path.startswith(folder) and path[len(folder)] == "/")
+
+
+def is_admin_only_path(raw: str) -> bool:
+    """需要管理員權限才能寫的地方（Windows 系統資料夾、Program Files、磁碟根目錄、Unix 的系統資料夾）。程式永遠不寫那裡。"""
+    p = _norm_path(raw.strip())
+    if not p:
+        return True                                                       # 沒有路徑不是可以寫的地方
+    if len(p) >= 2 and p[1] == ":" and "a" <= p[0] <= "z":
+        rest = p[3:] if len(p) > 3 else ""
+        if not rest:
+            return True                                                   # 磁碟根目錄本身
+        if "/" not in rest and "." in rest:                               # 直接放在根目錄的檔案；根目錄底下自己建的資料夾（D:/影片）另外判斷
+            return True
+        return any(_starts_with_folder(rest, f) for f in ("windows", "program files", "program files (x86)", "programdata",
+                                                           "$recycle.bin", "system volume information", "recovery"))
+    return any(p == f or (f != "/" and _starts_with_folder(p, f))
+               for f in ("/", "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib32", "/lib64", "/opt", "/var", "/boot", "/sys", "/proc", "/dev", "/root", "/srv", "/snap"))
+
+
+@dataclass
+class GuardIssue:
+    id: str
+    detail: str = ""
+    fatal: bool = False
+    fix: tuple = ()          # （設定名稱, 值）的清單；空＝沒有自動修正
+
+
+def probe_out_dir(out_dir: str) -> dict:
+    """儲存位置的實際狀況：寫得進去嗎、還剩多少空間（None＝不知道）。資料夾要已經存在。"""
+    try:
+        with tempfile.NamedTemporaryFile(dir=out_dir, prefix=".avd_write_test"):
+            writable = True
+    except OSError:
+        writable = False
+    try:
+        free = shutil.disk_usage(out_dir).free
+    except OSError:
+        free = None
+    return {"writable": writable, "free": free}
+
+
+def check_download_settings(s: "Settings", writable: bool | None = True, free: int | None = None) -> list[GuardIssue]:
+    """設定與儲存位置的狀況 → 有問題的清單。writable／free 由 probe_out_dir 取得（測試時直接給）。"""
+    issues: list[GuardIssue] = []
+    if is_admin_only_path(s.out_dir):
+        issues.append(GuardIssue("dir_admin_only", s.out_dir, fatal=True))
+    elif writable is False:
+        issues.append(GuardIssue("dir_not_writable", s.out_dir, fatal=True))
+    elif free is not None and free < GUARD_MIN_FREE_BYTES:
+        issues.append(GuardIssue("disk_low", f"{free / 1024 ** 3:.1f}"))
+
+    video, original, c = s.mode == "video", s.priority == "original", s.container
+    if video and s.priority == "compat" and c in ("webm", "avi"):
+        issues.append(GuardIssue("compat_not_kept", c, fix=(("container", "mp4"),)))
+    if video and not original and s.embed_subs and c not in SUBS_OK:
+        issues.append(GuardIssue("subs_dropped", c, fix=(("container", "mkv"),)))
+    if s.embed_thumb:
+        if video and original:
+            issues.append(GuardIssue("thumb_dropped", "original", fix=(("embed_thumb", "false"),)))
+        elif video and c not in THUMB_OK:
+            issues.append(GuardIssue("thumb_dropped", c, fix=(("container", "mkv"),)))
+        elif not video and s.audio_format not in THUMB_OK:
+            issues.append(GuardIssue("thumb_dropped", s.audio_format,
+                                     fix=(("audio_format", "flac"),) if s.audio_format == "wav" else (("embed_thumb", "false"),)))
+    return issues
+
+
+def apply_guard_fixes(s: "Settings", issues: list[GuardIssue]) -> "Settings":
+    """把每個問題的修法套上去（依序，後面的蓋過前面的）。回傳新的設定，原本的不動。"""
+    changes: dict = {}
+    for i in issues:
+        for key, value in i.fix:
+            changes[key] = (value == "true") if key.startswith("embed_") else value
+    return replace(s, **changes)
+
+
+def describe_guard_issue(i: GuardIssue) -> str:
+    d = i.detail
+    if i.id == "dir_admin_only":
+        return f"儲存位置 {d} 在需要管理員權限的位置（Windows、Program Files 等），程式不會寫入那裡。請選擇你自己的資料夾（例如「文件」或「影片」底下）。"
+    if i.id == "dir_not_writable":
+        return f"無法寫入儲存位置 {d}：資料夾是唯讀、被 Windows「受控資料夾存取」（防勒索軟體）擋住，或權限不足。請換一個位置（例如桌面）。"
+    if i.id == "disk_low":
+        return f"儲存位置所在的磁碟只剩 {d} GB 可用空間。高畫質影片可能好幾 GB，空間不夠時下載到一半會失敗。"
+    if i.id == "compat_not_kept":
+        return f"「相容優先」承諾輸出 H.264 + AAC，但 {d} 容器做不到（webm 裝不下 H.264，avi 一律轉成 MPEG-4 + MP3），結果不會是 H.264。要 H.264 請改用 mp4（畫質最高又能播）。"
+    if i.id == "subs_dropped":
+        return f"已勾選嵌入字幕，但 {d} 容器不支援，字幕不會被嵌入。改用 mkv 可以嵌入（也不必重新編碼）。"
+    if i.id == "thumb_dropped":
+        if d == "original":
+            return "「原始品質（不轉檔）」要等網站給什麼才知道容器，所以不會嵌入封面；勾選的「嵌入封面」不會有作用。"
+        if d == "best":
+            return "音訊「原始（不轉檔）」不嵌入封面（格式要看網站給什麼才知道）；勾選的「嵌入封面」不會有作用。"
+        if d == "wav":
+            return "wav 不支援嵌入封面。改用 flac（同樣無損）可以嵌入。"
+        return f"已勾選嵌入封面，但 {d} 容器不支援，封面不會被嵌入。改用 mkv 可以嵌入。"
+    return i.id
+
+
 # ─── 平台網址處理 ───────────────────────────────────────────────────────────
 #
 # 使用者貼的常常不是乾淨的網址。抖音與小紅書的「分享」會複製一整段文字（標題、表情符號、「復制打開抖音」之類的話，
@@ -1193,6 +1320,9 @@ class App(tk.Tk):
         except OSError as e:
             messagebox.showerror(APP_NAME, f"無法建立儲存資料夾：\n{e}")
             return
+        s = self._guard_before_download(s)
+        if s is None:
+            return
         s.save()
 
         self.cancel.clear()
@@ -1207,6 +1337,29 @@ class App(tk.Tk):
         self._log(f"開始下載 {len(urls)} 個網址（{what}）→ {s.out_dir}", "info")
         self.job = DownloadJob(urls, s, self.ffmpeg_dir, self._post, self.cancel)
         self.job.start()
+
+    def _guard_before_download(self, s: Settings) -> Settings | None:
+        """下載前的設定防呆（見 check_download_settings）。回傳要用的設定；使用者取消或遇到致命問題回傳 None。"""
+        issues = check_download_settings(s, **probe_out_dir(s.out_dir))
+        fatal = [i for i in issues if i.fatal]
+        if fatal:
+            messagebox.showerror(APP_NAME, "\n\n".join(describe_guard_issue(i) for i in fatal))
+            return None
+        if not issues:
+            return s
+        text = "\n\n".join("• " + describe_guard_issue(i) for i in issues)
+        if any(i.fix for i in issues):
+            answer = messagebox.askyesnocancel(APP_NAME, text + "\n\n要自動修正嗎？（修正後保留最高畫質）\n\n"
+                                               "是：自動修正並開始　　否：照原設定開始　　取消：不開始")
+            if answer is None:
+                return None
+            if answer:
+                s = apply_guard_fixes(s, issues)
+                self.settings = s
+                self._load_settings_into_ui()
+                self._update_option_states()
+            return s
+        return s if messagebox.askokcancel(APP_NAME, text + "\n\n要照原設定開始嗎？") else None
 
     def _capture(self, start_url: str = "") -> None:
         """「從瀏覽器擷取」：網站頁面解析不了、但瀏覽器能播時，抓出播放器實際載入的影音，自動挑最高畫質與音質。"""

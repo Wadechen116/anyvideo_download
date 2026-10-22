@@ -14,6 +14,7 @@ qt_add_executable(AnyVideoDownload WIN32
     src/mainwindow.h src/mainwindow.cpp
     src/capture.h src/capture.cpp
     src/platform.h src/platform.cpp
+    src/guard.h src/guard.cpp
 )
 target_link_libraries(AnyVideoDownload PRIVATE Qt6::Widgets Qt6::Network Qt6::WebSockets)
 

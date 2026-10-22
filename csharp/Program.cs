@@ -7,6 +7,7 @@
 //   AnyVideoDownload.exe --headless download <settings.json> <url>... 走和視窗相同的下載流程
 //   AnyVideoDownload.exe --headless probe    <settings.json> <url>     解析網址
 //   AnyVideoDownload.exe --headless urls     <文字檔>                  印出從文字裡找到的每個網址：「平台<Tab>改寫後的網址」
+//   AnyVideoDownload.exe --headless guard    <settings.json> [free=位元組] [writable=0|1]  印出下載前防呆找到的問題，與修正後的設定
 //   AnyVideoDownload.exe --headless resolve  <網址> [主機...]          展開短連結（額外列出的主機也當短連結，讓測試能用本機伺服器）
 //   AnyVideoDownload.exe --headless capture  <網址> <輸出資料夾> [等幾秒]  從瀏覽器擷取（開瀏覽器載入網址、等影音出現、下載並合併）
 using System.IO;
@@ -44,6 +45,23 @@ public static class Program
                 var n = Platforms.NormalizeUrl(u);
                 Out(Platforms.Name(Platforms.Of(n)) + "\t" + n);
             }
+            return 0;
+        }
+        if (args.Length >= 3 && args[1] == "guard")
+        {
+            var gs = Settings.LoadFrom(args[2]);
+            long free = -1;
+            var writable = true;
+            foreach (var a in args.Skip(3))
+            {
+                if (a.StartsWith("free=")) free = long.Parse(a[5..], System.Globalization.CultureInfo.InvariantCulture);
+                else if (a.StartsWith("writable=")) writable = a[9..] != "0";
+            }
+            var found = DownloadGuard.Check(gs, new DirProbe(writable, free));
+            foreach (var i in found)
+                Out($"issue\t{i.Id}\t{i.Detail}\t{(i.Fatal ? 1 : 0)}\t{string.Join(';', i.Fix.Select(f => f.Key + "=" + f.Value))}");
+            var fixedSettings = DownloadGuard.ApplyFixes(gs, found);
+            Out($"fixed\t{fixedSettings.Container}\t{(fixedSettings.EmbedSubs ? 1 : 0)}\t{(fixedSettings.EmbedThumb ? 1 : 0)}\t{fixedSettings.AudioFormat}");
             return 0;
         }
         if (args.Length >= 3 && args[1] == "resolve")

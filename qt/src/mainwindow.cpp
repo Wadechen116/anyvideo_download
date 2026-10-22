@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 
 #include "capture.h"
+#include "guard.h"
 
 #include <QApplication>
 #include <QButtonGroup>
@@ -450,7 +451,7 @@ void MainWindow::startDownload()
         QMessageBox::information(this, kAppName, "請先貼上至少一個網址。");
         return;
     }
-    const Settings s = collectSettings();
+    Settings s = collectSettings();
     if (s.outDir.isEmpty()) {
         QMessageBox::warning(this, kAppName, "請選擇儲存位置。");
         return;
@@ -465,6 +466,7 @@ void MainWindow::startDownload()
         QMessageBox::critical(this, kAppName, "無法建立儲存資料夾：\n" + s.outDir);
         return;
     }
+    if (!guardBeforeDownload(s)) return;
     s.save();
 
     setBusy(true);
@@ -486,6 +488,39 @@ void MainWindow::startDownload()
     connect(job_, &DownloadJob::status, this, &MainWindow::onStatus);
     connect(job_, &DownloadJob::done, this, &MainWindow::onDone);
     job_->start();
+}
+
+// 下載前的設定防呆（見 guard.h）。s 可能被改成修正後的設定；使用者取消或遇到致命問題回傳 false。
+bool MainWindow::guardBeforeDownload(Settings& s)
+{
+    const QList<GuardIssue> issues = checkDownloadSettings(s, probeOutDir(s.outDir));
+    QStringList fatal;
+    for (const GuardIssue& i : issues) if (i.fatal) fatal << describeGuardIssue(i);
+    if (!fatal.isEmpty()) {
+        QMessageBox::critical(this, kAppName, fatal.join("\n\n"));
+        return false;
+    }
+    if (issues.isEmpty()) return true;
+    QStringList lines;
+    bool anyFix = false;
+    for (const GuardIssue& i : issues) { lines << "• " + describeGuardIssue(i); anyFix |= !i.fix.isEmpty(); }
+    if (!anyFix)
+        return QMessageBox::question(this, kAppName, lines.join("\n\n") + "\n\n要照原設定開始嗎？", QMessageBox::Ok | QMessageBox::Cancel) == QMessageBox::Ok;
+    QMessageBox box(QMessageBox::Question, kAppName, lines.join("\n\n") + "\n\n要自動修正嗎？（修正後保留最高畫質）",
+                    QMessageBox::Yes | QMessageBox::No | QMessageBox::Cancel, this);
+    box.button(QMessageBox::Yes)->setText("自動修正並開始");
+    box.button(QMessageBox::No)->setText("照原設定開始");
+    box.button(QMessageBox::Cancel)->setText("取消");
+    box.setDefaultButton(QMessageBox::Yes);
+    const int answer = box.exec();
+    if (answer == QMessageBox::Cancel) return false;
+    if (answer == QMessageBox::Yes) {
+        s = applyGuardFixes(s, issues);
+        settings_ = s;
+        loadSettingsIntoUi();
+        updateOptionStates();
+    }
+    return true;
 }
 
 void MainWindow::cancelDownload()

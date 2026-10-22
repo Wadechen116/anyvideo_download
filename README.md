@@ -67,7 +67,15 @@
   限制：只能挑播放器實際請求過的畫質（要更高畫質，先在網站播放器把畫質調高）；有 DRM 的內容抓不到。
   實作：Python 版在 `py\avd_capture.py`（Tk 視窗，需要 `websockets`，隨 `yt-dlp[default]` 安裝）、Qt 版在 `qt\src\capture.cpp`、C# 版在 `csharp\Capture.cs`。
 
-測試：`tests\capture_flow.py`（從瀏覽器擷取的離線端對端：本機網頁放一支正在播放的影片，再用 fetch 抓同一支的較高畫質與聲音，以及一支「預先載入的下一支」
+- **下載前的設定防呆**：按「開始下載」前先檢查，只在「確定有問題」時提醒（你刻意的選擇不念）。能修的附修法，修法以畫質最高、不損耗為優先：
+  - 致命，不能照原設定做：儲存位置在需要管理員權限的地方（Windows、Program Files、磁碟根目錄…，程式永遠不寫那裡）、儲存位置寫不進去（唯讀、受控資料夾存取）。
+  - 提醒：磁碟空間不到 2 GB；「相容優先」卻選了 webm／avi（做不到 H.264，修法：mp4）；勾了嵌入字幕／封面但容器不支援（會悄悄不嵌，修法：mkv，只是重新封裝）；
+    原始品質或原始音訊勾了嵌入封面（不會有作用）；wav 嵌封面（修法：flac）。
+  - 三個選擇：自動修正並開始、照原設定開始、取消（Python 版是「是／否／取消」）。
+  規則在 `py\anyvideo_download.py`、`qt\src\guard.cpp`、`csharp\Guard.cs`，三個版本必須一模一樣。
+
+測試：`tests\guard_flow.py`（防呆規則：同一批 96 個「設定 × 儲存位置狀況」案例，三個版本逐項比對，另有 24 項明確預期）、
+`tests\ui_guard.ps1`（Qt、C# 按下「開始下載」時真的跳出防呆對話框、取消就不開始）、`tests\capture_flow.py`（從瀏覽器擷取的離線端對端：本機網頁放一支正在播放的影片，再用 fetch 抓同一支的較高畫質與聲音，以及一支「預先載入的下一支」
 影片當干擾，用真的 Chrome／Edge 跑，三個版本都要選對）、`tests\ui_capture.ps1`（Qt、C# 擷取視窗的 UI Automation 測試）、
 `tests\platform_urls.py`（網址處理，三個版本同一批 14 項案例）、`tests\original_quality.py`（原始品質：把來源與結果都解碼，
 比對每一格畫面與每個聲音取樣的雜湊值，三個版本）、`tests\smoke_native.py`（Qt／C# 參數與 Python 版逐項一致，含新模式）。

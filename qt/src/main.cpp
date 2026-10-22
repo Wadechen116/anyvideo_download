@@ -20,6 +20,7 @@
 #endif
 
 #include "capture.h"
+#include "guard.h"
 #include "platform.h"
 #include "engine.h"
 #include "mainwindow.h"
@@ -50,6 +51,24 @@ int headless(int argc, char* argv[])
         if (!f.open(QIODevice::ReadOnly)) { out("error\tcannot open"); return 2; }
         for (const QString& u : extractUrls(QString::fromUtf8(f.readAll())))
             out(platformName(platformOf(QUrl(normalizeUrl(u)))) + "\t" + normalizeUrl(u));
+        return 0;
+    }
+    // guard <settings.json> [free=位元組] [writable=0|1]：印出下載前防呆找到的問題，與修正後的設定（測試用）
+    if (a.size() >= 4 && a[2] == "guard") {
+        const Settings gs = Settings::loadFrom(a[3]);
+        DirProbe probe;
+        for (int i = 4; i < a.size(); ++i) {
+            if (a[i].startsWith("free=")) probe.free = a[i].mid(5).toLongLong();
+            else if (a[i].startsWith("writable=")) probe.writable = a[i].mid(9) != "0";
+        }
+        const QList<GuardIssue> issues = checkDownloadSettings(gs, probe);
+        for (const GuardIssue& i : issues) {
+            QStringList fix;
+            for (const auto& kv : i.fix) fix << kv.first + "=" + kv.second;
+            out("issue\t" + i.id + "\t" + i.detail + "\t" + (i.fatal ? "1" : "0") + "\t" + fix.join(';'));
+        }
+        const Settings f = applyGuardFixes(gs, issues);
+        out(QString("fixed\t%1\t%2\t%3\t%4").arg(f.container, f.embedSubs ? "1" : "0", f.embedThumb ? "1" : "0", f.audioFormat));
         return 0;
     }
     if (a.size() >= 4 && a[2] == "resolve") {

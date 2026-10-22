@@ -83,6 +83,8 @@ public static class Options
 
 public sealed class Settings
 {
+    public Settings Clone() => (Settings)MemberwiseClone();
+
     public string OutDir { get; set; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads");
     public string Mode { get; set; } = "video";        // "video" 或 "audio"

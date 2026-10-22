@@ -39,6 +39,7 @@ private:
     void openDir();
     void probe();
     void startDownload();
+    bool guardBeforeDownload(avd::Settings& s);
     void cancelDownload();
     void updateCore();
     void captureFromBrowser(const QString& startUrl = QString());

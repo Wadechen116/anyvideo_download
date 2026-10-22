@@ -273,6 +273,35 @@ public partial class MainWindow : Window
                 MessageBoxButton.OK, MessageBoxImage.Error);
             return;
         }
+        // 下載前的設定防呆（見 Guard.cs）。可能被改成修正後的設定；使用者取消或遇到致命問題就不開始。
+        var guardIssues = DownloadGuard.Check(s, DownloadGuard.ProbeOutDir(s.OutDir));
+        var guardFatal = guardIssues.Where(i => i.Fatal).Select(DownloadGuard.Describe).ToList();
+        if (guardFatal.Count > 0)
+        {
+            MessageBox.Show(this, string.Join("\n\n", guardFatal), Options.AppName, MessageBoxButton.OK, MessageBoxImage.Error);
+            return;
+        }
+        if (guardIssues.Count > 0)
+        {
+            var guardText = string.Join("\n\n", guardIssues.Select(i => "• " + DownloadGuard.Describe(i)));
+            if (guardIssues.Any(i => i.Fix.Count > 0))
+            {
+                var answer = MessageBox.Show(this, guardText + "\n\n要自動修正嗎？（修正後保留最高畫質）\n\n是：自動修正並開始　　否：照原設定開始　　取消：不開始",
+                    Options.AppName, MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Yes);
+                if (answer == MessageBoxResult.Cancel) return;
+                if (answer == MessageBoxResult.Yes)
+                {
+                    s = DownloadGuard.ApplyFixes(s, guardIssues);
+                    _settings = s;
+                    LoadSettingsIntoUi();
+                    UpdateOptionStates();
+                }
+            }
+            else if (MessageBox.Show(this, guardText + "\n\n要照原設定開始嗎？", Options.AppName, MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
+            {
+                return;
+            }
+        }
         s.Save();
 
         _cts = new CancellationTokenSource();

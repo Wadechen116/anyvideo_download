@@ -1450,6 +1450,10 @@ class App(tk.Tk):
                 self._log(msg, "ok" if fail == 0 else "warn")
             self.lbl_item.configure(text="待機")
             self.lbl_status.configure(text=msg)
+            if not cancelled and fail == 0 and not getattr(self.job, "capture_urls", []):
+                # 全部成功：清空網址區與紀錄，準備貼下一批（有失敗或取消時保留，才看得到原因、也能重試）
+                self.url_text.delete("1.0", "end")
+                self._clear_log()
             # 抖音、小紅書、TikTok 的解析器常因網站改版或要求登入而失敗，但瀏覽器能播，就能用「從瀏覽器擷取」抓下來
             retry = list(getattr(self.job, "capture_urls", [])) if not cancelled else []
             if retry and messagebox.askyesno(APP_NAME, "下面的網址下載失敗：\n\n" + "\n".join(retry) +

@@ -604,6 +604,11 @@ void MainWindow::onDone(int ok, int fail, bool cancelled)
     }
     lblItem_->setText("待機");
     lblStatus_->setText(msg);
+    if (!cancelled && fail == 0 && retryByCapture.isEmpty()) {
+        // 全部成功：清空網址區與紀錄，準備貼下一批（有失敗或取消時保留，才看得到原因、也能重試）
+        urlEdit_->clear();
+        log_->clear();
+    }
 
     // 抖音、小紅書、TikTok 的解析器常因網站改版或要求登入而失敗，但瀏覽器能播，就能用「從瀏覽器擷取」抓下來
     if (!cancelled && !retryByCapture.isEmpty() && engine_.ok() &&

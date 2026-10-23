@@ -427,6 +427,12 @@ public partial class MainWindow : Window
         }
         LblItem.Text = "待機";
         LblStatus.Text = msg;
+        if (!r.Cancelled && r.Fail == 0 && retryByCapture.Count == 0)
+        {
+            // 全部成功：清空網址區與紀錄，準備貼下一批（有失敗或取消時保留，才看得到原因、也能重試）
+            UrlBox.Clear();
+            LogBox.Document.Blocks.Clear();
+        }
 
         // 抖音、小紅書、TikTok 的解析器常因網站改版或要求登入而失敗，但瀏覽器能播，就能用「從瀏覽器擷取」抓下來
         if (retryByCapture.Count > 0 && _engine.Ok &&

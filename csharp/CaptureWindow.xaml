@@ -32,6 +32,7 @@
 
         <DockPanel Grid.Row="1" Margin="0,10,0,0">
             <Button x:Name="BtnOpen" DockPanel.Dock="Right" Margin="6,0,0,0" Content="開啟瀏覽器" Click="OpenBrowser_Click" />
+            <Button x:Name="BtnAuto" DockPanel.Dock="Right" Margin="6,0,0,0" Content="自動擷取" Click="Auto_Click" />
             <TextBox x:Name="UrlBox" VerticalContentAlignment="Center" AutomationProperties.Name="要先開啟的網頁網址" />
         </DockPanel>
 

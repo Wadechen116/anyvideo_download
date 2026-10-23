@@ -49,6 +49,9 @@ QStringList takeLinesFrom(QByteArray& buf)
 }
 
 constexpr int kStallSeconds = 60;
+constexpr int kAutoWaitSeconds = 30;      // 自動擷取：等到「有影音、而且有一支正在播放」的時間上限；超過就交給使用者手動操作（多半要登入）
+constexpr int kAutoSettleMs = 2000;       // 偵測到的影音檔案這麼久沒再增加，就當作影像與聲音都到齊了
+constexpr int kParallelDownloads = 4;   // 同時下載幾個（太多會被 CDN 當成異常連線）
 
 QString mb(qint64 n) { return n < 0 ? QStringLiteral("大小未知") : QString::number(n / 1048576.0, 'f', 1) + " MB"; }
 
@@ -150,6 +153,13 @@ void CaptureSession::stop()
     if (ws_.state() != QAbstractSocket::UnconnectedState) ws_.close();
 }
 
+void CaptureSession::closeBrowser()
+{
+    send("Browser.close");
+    ws_.flush();
+    QTimer::singleShot(300, this, [this] { stop(); });
+}
+
 void CaptureSession::queryPlayingVideo()
 {
     videos_.clear();
@@ -172,10 +182,11 @@ void CaptureSession::finishQuery()
     pendingEval_.clear();
     double duration = -1;
     double bestTime = -1;
+    lastPlaying_ = false;
     for (const QList<double>& v : std::as_const(videos_)) {
         const bool playing = v[1] == 0 && v[2] > 0.3;
         const double score = (playing ? 1e6 : 0) + v[2];
-        if (v[0] > 0 && score > bestTime) { bestTime = score; duration = v[0]; }
+        if (v[0] > 0 && score > bestTime) { bestTime = score; duration = v[0]; lastPlaying_ = playing; }
     }
     emit playingVideo(duration);
 }
@@ -294,8 +305,10 @@ CaptureDialog::CaptureDialog(Engine engine, QString ffmpegDir, QString outDir, Q
     auto* row = new QHBoxLayout;
     urlEdit_ = new QLineEdit(startUrl);
     urlEdit_->setPlaceholderText(QStringLiteral("要先開啟的網頁網址（可留白）"));
+    btnAuto_ = new QPushButton(QStringLiteral("自動擷取"));
     btnOpen_ = new QPushButton(QStringLiteral("開啟瀏覽器"));
     row->addWidget(urlEdit_, 1);
+    row->addWidget(btnAuto_);
     row->addWidget(btnOpen_);
     root->addLayout(row);
 
@@ -327,21 +340,20 @@ CaptureDialog::CaptureDialog(Engine engine, QString ffmpegDir, QString outDir, Q
     root->addWidget(lblStatus_);
     root->addWidget(log_, 1);
 
-    stall_.setSingleShot(true);
-    connect(&stall_, &QTimer::timeout, this, [this] {
-        if (!proc_) return;
-        log(QStringLiteral("第 %1 項超過 %2 秒沒有任何進度，略過這一項。").arg(index_ + 1).arg(kStallSeconds));
-        killTree(*proc_);   // finished 訊號會接著下一項
-    });
+    autoTimer_.setInterval(500);
+    connect(&autoTimer_, &QTimer::timeout, this, &CaptureDialog::autoTick);
+    connect(btnAuto_, &QPushButton::clicked, this, &CaptureDialog::startAuto);
     connect(btnOpen_, &QPushButton::clicked, this, &CaptureDialog::openBrowser);
     connect(btnDownload_, &QPushButton::clicked, this, &CaptureDialog::downloadCaptured);
     connect(btnStop_, &QPushButton::clicked, this, &CaptureDialog::stopAll);
     connect(btnClose, &QPushButton::clicked, this, &QDialog::accept);
+    if (!startUrl.isEmpty()) QTimer::singleShot(300, this, &CaptureDialog::startAuto);   // 帶著網址開啟：直接自動擷取
 }
 
 CaptureDialog::~CaptureDialog()
 {
     stopAll();
+    qDeleteAll(items_);
     if (session_) {
         // 對話框的子元件即將被刪除；連線關閉時送出的「已斷線」訊息不能再回頭碰它們
         QObject::disconnect(session_, nullptr, this, nullptr);
@@ -357,17 +369,22 @@ void CaptureDialog::done(int r)
 
 void CaptureDialog::updateButtons()
 {
-    btnDownload_->setEnabled(!candidates_.isEmpty() && !proc_);
-    btnStop_->setEnabled(proc_ || browserOpen_);
+    btnDownload_->setEnabled(!candidates_.isEmpty() && running_ == 0);
+    btnStop_->setEnabled(running_ > 0 || browserOpen_ || autoState_ != 0);
+    btnAuto_->setEnabled(!browserOpen_ && running_ == 0);
 }
 
 // 停止：下載中就結束 yt-dlp 整個程序樹；否則停止監聽瀏覽器
 void CaptureDialog::stopAll()
 {
-    if (proc_) {
+    autoTimer_.stop();
+    autoState_ = 0;
+    autoRun_ = false;
+    if (running_ > 0) {
         cancelled_ = true;
-        killTree(*proc_);
-        return;   // finished 訊號會接著收尾
+        for (Item* it : items_)
+            if (it->proc) killTree(*it->proc);
+        return;   // 每個 finished 訊號會接著收尾
     }
     if (session_ && browserOpen_) {
         session_->stop();
@@ -438,8 +455,98 @@ QList<MediaCandidate> CaptureDialog::pickCandidates() const
     return all;
 }
 
+void CaptureDialog::startAuto()
+{
+    if (browserOpen_ || running_ > 0) return;
+    openBrowser();
+    if (!browserOpen_) return;
+    targetDuration_ = -1;
+    autoState_ = 1;
+    queryInFlight_ = false;
+    autoClock_.start();
+    lblStatus_->setText(QStringLiteral("自動擷取：等待網頁開始播放影片…"));
+    autoTimer_.start();
+    updateButtons();
+}
+
+// 每 0.5 秒：還沒鎖定長度就問瀏覽器有沒有正在播放的影片；鎖定後等影音檔案到齊，再開始下載
+void CaptureDialog::autoTick()
+{
+    if (autoState_ == 1) {
+        if (autoClock_.elapsed() > kAutoWaitSeconds * 1000) {
+            autoFallback(QStringLiteral("一直沒有偵測到正在播放的影片，多半是需要登入或驗證：請在瀏覽器視窗操作（登入後播放影片），再按「下載擷取到的影片」。"));
+            return;
+        }
+        if (candidates_.isEmpty() || queryInFlight_ || !session_) return;
+        queryInFlight_ = true;
+        connect(session_, &CaptureSession::playingVideo, this, [this](double d) {
+            queryInFlight_ = false;
+            if (autoState_ != 1 || !(d > 0 && session_->lastQueryPlaying())) return;
+            targetDuration_ = d;
+            log(QStringLiteral("鎖定正在播放的影片長度：%1 秒").arg(d, 0, 'f', 2));
+            lblStatus_->setText(QStringLiteral("自動擷取：等待影像與聲音都出現…"));
+            autoState_ = 2;
+            settleCount_ = candidates_.size();
+            settleClock_.start();
+            autoClock_.start();
+        }, Qt::SingleShotConnection);
+        session_->queryPlayingVideo();
+    } else if (autoState_ == 2) {
+        if (candidates_.size() != settleCount_) {
+            settleCount_ = candidates_.size();
+            settleClock_.start();
+        } else if (settleClock_.elapsed() < kAutoSettleMs && autoClock_.elapsed() < 8000) {
+            return;
+        }
+        autoTimer_.stop();
+        autoState_ = 0;
+        autoRun_ = true;
+        beginDownloads();   // 長度已鎖定，不再重問
+    }
+}
+
+// 下載結果和鎖定的長度比對：相符就關瀏覽器；不符留著檔案交給使用者
+void CaptureDialog::autoVerify(const QString& path)
+{
+    autoRun_ = false;
+    double got = -1;
+    if (!ffmpegDir_.isEmpty()) {
+        QProcess p;
+        configureProcess(p);
+        p.start(ffmpegDir_ + "/ffprobe.exe", {"-v", "error", "-print_format", "json", "-show_entries", "format=duration", path});
+        p.waitForFinished(30000);
+        bool ok = false;
+        const double d = QJsonDocument::fromJson(p.readAllStandardOutput()).object().value("format").toObject().value("duration").toString().toDouble(&ok);
+        if (ok) got = d;
+    }
+    const double tolerance = std::max(0.6, targetDuration_ * 0.05);
+    if (got > 0 && std::abs(got - targetDuration_) <= tolerance) {
+        log(QStringLiteral("長度比對成功：下載 %1 秒，正在播放 %2 秒").arg(got, 0, 'f', 2).arg(targetDuration_, 0, 'f', 2));
+        if (session_) session_->closeBrowser();
+        browserOpen_ = false;
+        btnOpen_->setEnabled(true);
+        log(QStringLiteral("自動擷取完成，已關閉瀏覽器。"));
+        updateButtons();
+        return;
+    }
+    log(QStringLiteral("長度比對不符：下載 %1 秒，正在播放 %2 秒").arg(got, 0, 'f', 2).arg(targetDuration_, 0, 'f', 2));
+    autoFallback(QStringLiteral("下載到的影片長度和正在播放的不符，檔案先留著：請確認瀏覽器裡播放的是要的影片，再按「下載擷取到的影片」重試。"));
+}
+
+// 交給使用者：瀏覽器維持開著，原本的按鈕照常可用
+void CaptureDialog::autoFallback(const QString& msg)
+{
+    autoTimer_.stop();
+    autoState_ = 0;
+    autoRun_ = false;
+    lblStatus_->setText(msg);
+    log(msg);
+    updateButtons();
+}
+
 void CaptureDialog::downloadCaptured()
 {
+    autoRun_ = false;
     targetDuration_ = -1;
     btnDownload_->setEnabled(false);
     if (session_ && browserOpen_) {
@@ -461,31 +568,47 @@ void CaptureDialog::beginDownloads()
     queue_ = pickCandidates();
     if (queue_.isEmpty()) return;
     QDir().mkpath(outDir_);
-    files_.clear();
-    index_ = 0;
+    qDeleteAll(items_);
+    items_.clear();
+    for (int i = 0; i < queue_.size(); ++i) items_ << new Item;
+    nextIndex_ = 0;
+    running_ = 0;
+    doneCount_ = 0;
     stamp_ = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     cancelled_ = false;
     btnDownload_->setEnabled(false);
     btnStop_->setEnabled(true);
-    downloadNext();
+    bar_->setValue(0);
+    lblStatus_->setText(QStringLiteral("下載中：同時下載 %1 項（最多 %2 個一起）…").arg(queue_.size()).arg(kParallelDownloads));
+    pump();
 }
 
-void CaptureDialog::downloadNext()
+// 補滿同時下載的名額；全部結束（或停止後最後一個結束）才收尾
+void CaptureDialog::pump()
 {
-    if (cancelled_ || index_ >= queue_.size()) {
-        finish();
-        return;
-    }
-    const MediaCandidate c = queue_[index_];
-    lblStatus_->setText(QStringLiteral("下載第 %1/%2 項…").arg(index_ + 1).arg(queue_.size()));
-    log(QStringLiteral("第 %1/%2 項：[%3] %4 %5").arg(index_ + 1).arg(queue_.size()).arg(c.kind, mb(c.size), c.url.left(110)));
-    bar_->setValue(0);
-    itemClock_.start();
+    while (!cancelled_ && running_ < kParallelDownloads && nextIndex_ < queue_.size()) startItem(nextIndex_++);
+    if (running_ == 0 && (cancelled_ || nextIndex_ >= queue_.size())) finish();
+}
+
+void CaptureDialog::updateProgress()
+{
+    int sum = 0;
+    for (const Item* it : items_) sum += it->pct;
+    if (!items_.isEmpty()) bar_->setValue(sum / int(items_.size()));
+}
+
+void CaptureDialog::startItem(int i)
+{
+    const MediaCandidate c = queue_[i];
+    Item* it = items_[i];
+    log(QStringLiteral("第 %1/%2 項開始：[%3] %4 %5").arg(i + 1).arg(queue_.size()).arg(c.kind, mb(c.size), c.url.left(110)));
+    it->clock.start();
+    it->buf.clear();
 
     QStringList a = {"--ignore-config", "--newline", "--color", "never", "--no-playlist", "-q", "--progress",
                      "--no-simulate", "--retries", "10", "--fragment-retries", "10", "--socket-timeout", "30",
                      "--windows-filenames", "--merge-output-format", "mp4/mkv"};
-    a << "-o" << QDir::toNativeSeparators(QStringLiteral("%1/擷取_%2_%3.%(ext)s").arg(outDir_, stamp_).arg(index_ + 1));
+    a << "-o" << QDir::toNativeSeparators(QStringLiteral("%1/擷取_%2_%3.%(ext)s").arg(outDir_, stamp_).arg(i + 1));
     a << "--print" << "after_move:AVD-FILE|%(filepath)s";
     if (!ffmpegDir_.isEmpty()) a << "--ffmpeg-location" << ffmpegDir_;
     if (!c.referer.isEmpty()) a << "--add-header" << "Referer:" + c.referer;
@@ -494,58 +617,78 @@ void CaptureDialog::downloadNext()
     if (!noImpersonate_) a << "--impersonate" << "chrome";
     a << "--" << c.url;
 
-    buffer_.clear();
-    proc_ = new QProcess(this);
-    configureProcess(*proc_);
-    proc_->setProcessChannelMode(QProcess::MergedChannels);
-    connect(proc_, &QProcess::readyReadStandardOutput, this, [this] {
-        stall_.start(kStallSeconds * 1000);   // 有輸出就重新計時
-        buffer_ += proc_->readAllStandardOutput();
+    if (!it->stall) {
+        it->stall = new QTimer(this);
+        it->stall->setSingleShot(true);
+        connect(it->stall, &QTimer::timeout, this, [this, i, it] {
+            if (!it->proc) return;
+            log(QStringLiteral("第 %1 項超過 %2 秒沒有任何進度，略過這一項。").arg(i + 1).arg(kStallSeconds));
+            killTree(*it->proc);   // finished 訊號會補上下一項
+        });
+    }
+    QProcess* proc = new QProcess(this);
+    it->proc = proc;
+    ++running_;
+    configureProcess(*proc);
+    proc->setProcessChannelMode(QProcess::MergedChannels);
+    connect(proc, &QProcess::readyReadStandardOutput, this, [this, i, it, proc] {
+        it->stall->start(kStallSeconds * 1000);   // 有輸出就重新計時
+        it->buf += proc->readAllStandardOutput();
         static const QRegularExpression pct(R"(\[download\]\s+([\d.]+)%)");
-        for (const QString& line : takeLinesFrom(buffer_)) {
+        for (const QString& line : takeLinesFrom(it->buf)) {
             if (line.startsWith("AVD-FILE|")) {
-                files_ << line.mid(9).trimmed();
-                log(QStringLiteral("第 %1 項完成（%2 秒）").arg(index_ + 1).arg(itemClock_.elapsed() / 1000));
+                it->file = line.mid(9).trimmed();
+                log(QStringLiteral("第 %1 項完成（%2 秒）").arg(i + 1).arg(it->clock.elapsed() / 1000));
             } else if (const auto m = pct.match(line); m.hasMatch()) {
-                bar_->setValue(int(m.captured(1).toDouble()));
+                it->pct = int(m.captured(1).toDouble());
+                updateProgress();
             } else if (line.startsWith("ERROR") || line.startsWith("WARNING")) {
-                log(line);
+                log(QStringLiteral("[第 %1 項] %2").arg(i + 1).arg(line));
             }
         }
     });
-    connect(proc_, &QProcess::finished, this, [this](int code, QProcess::ExitStatus) {
-        stall_.stop();
-        proc_->deleteLater();
-        proc_ = nullptr;
-        if (code != 0 && !cancelled_ && !noImpersonate_ && itemClock_.elapsed() < 15000 && !impersonateFailed_) {
-            // 很快就失敗：多半是這個 yt-dlp 沒有偽裝元件。同一項改用預設方式再試一次
-            impersonateFailed_ = true;
+    connect(proc, &QProcess::finished, this, [this, i, it, proc](int code, QProcess::ExitStatus) {
+        it->stall->stop();
+        proc->deleteLater();
+        it->proc = nullptr;
+        --running_;
+        if (code != 0 && !cancelled_ && !noImpersonate_ && !it->retried && it->clock.elapsed() < 15000) {
+            // 很快就失敗：多半是這個 yt-dlp 沒有偽裝元件。這一項改用預設方式再試一次，之後的項目也都不帶 --impersonate
+            it->retried = true;
             noImpersonate_ = true;
-            log(QStringLiteral("以 Chrome 身分連線失敗，改用預設方式重試這一項…"));
-            downloadNext();
+            log(QStringLiteral("以 Chrome 身分連線失敗，改用預設方式重試第 %1 項…").arg(i + 1));
+            startItem(i);
             return;
         }
-        if (code != 0 && !cancelled_) log(QStringLiteral("第 %1 項下載失敗（結束代碼 %2）").arg(index_ + 1).arg(code));
-        impersonateFailed_ = false;
-        ++index_;
-        downloadNext();
+        if (code != 0 && !cancelled_) log(QStringLiteral("第 %1 項下載失敗（結束代碼 %2）").arg(i + 1).arg(code));
+        it->pct = 100;
+        ++doneCount_;
+        if (!cancelled_) {
+            updateProgress();
+            lblStatus_->setText(QStringLiteral("下載中：已完成 %1/%2 項…").arg(doneCount_).arg(queue_.size()));
+        }
+        pump();
     });
-    connect(proc_, &QProcess::errorOccurred, this, [this](QProcess::ProcessError e) {
+    connect(proc, &QProcess::errorOccurred, this, [this, it, proc](QProcess::ProcessError e) {
         if (e != QProcess::FailedToStart) return;
         log(QStringLiteral("無法執行 yt-dlp"));
-        proc_->deleteLater();
-        proc_ = nullptr;
+        proc->deleteLater();
+        it->proc = nullptr;
+        --running_;
         cancelled_ = true;
-        finish();
+        for (Item* other : items_)
+            if (other->proc) killTree(*other->proc);
+        pump();
     });
-    proc_->start(engine_.program, engine_.args(a));
-    stall_.start(kStallSeconds * 1000);
+    proc->start(engine_.program, engine_.args(a));
+    it->stall->start(kStallSeconds * 1000);
     updateButtons();
 }
 
 void CaptureDialog::finish()
 {
     if (cancelled_) {
+        autoRun_ = false;
         bar_->setValue(0);
         lblStatus_->setText(QStringLiteral("已停止。未完成的 .part 暫存檔留在儲存位置。"));
         log(lblStatus_->text());
@@ -554,9 +697,12 @@ void CaptureDialog::finish()
     }
     bar_->setValue(100);
     updateButtons();
-    files_.removeIf([](const QString& f) { return !QFileInfo::exists(f); });
+    QStringList files_;
+    for (const Item* it : items_)
+        if (!it->file.isEmpty() && QFileInfo::exists(it->file)) files_ << it->file;
     if (files_.isEmpty()) {
-        lblStatus_->setText(QStringLiteral("沒有下載到任何檔案，原因見下方紀錄。"));
+        if (autoRun_) autoFallback(QStringLiteral("沒有下載到任何檔案，原因見下方紀錄。可在瀏覽器裡重新播放後再按「下載擷取到的影片」。"));
+        else lblStatus_->setText(QStringLiteral("沒有下載到任何檔案，原因見下方紀錄。"));
         return;
     }
 
@@ -619,6 +765,7 @@ void CaptureDialog::finish()
     auto report = [this](const QString& path) {
         lblStatus_->setText(QStringLiteral("完成：") + QDir::toNativeSeparators(path));
         log(lblStatus_->text());
+        if (autoRun_) autoVerify(path);
     };
     if (!whole.isEmpty()) {
         for (const QString& f : files_) if (f != whole) QFile::remove(f);
@@ -638,6 +785,7 @@ void CaptureDialog::finish()
     if (ff.exitCode() != 0 || !QFileInfo::exists(out)) {
         log(QStringLiteral("合併失敗：") + QString::fromUtf8(ff.readAllStandardError()).trimmed().right(300));
         lblStatus_->setText(QStringLiteral("影像與聲音已分別下載，但合併失敗，檔案留在儲存位置。"));
+        autoRun_ = false;
         return;
     }
     for (const QString& f : files_) QFile::remove(f);
@@ -648,6 +796,17 @@ bool CaptureDialog::selfTestLive(const QString& url, const QString& png)
 {
     show();
     urlEdit_->setText(url);
+    if (qEnvironmentVariableIntValue("AVD_AUTO") > 0) {   // 測自動擷取：等到狀態出現「完成：」或停在手動
+        btnAuto_->click();
+        for (int i = 0; i < 1200 && (autoState_ != 0 || running_ > 0 || autoRun_); ++i) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
+            QThread::msleep(50);
+        }
+        grab().save(png);
+        QFile f(png + ".txt");
+        if (f.open(QIODevice::WriteOnly)) f.write(log_->toPlainText().toUtf8());
+        return lblStatus_->text().startsWith(QStringLiteral("完成：")) && !browserOpen_;
+    }
     btnOpen_->click();
     for (int i = 0; i < 300 && candidates_.isEmpty(); ++i) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
@@ -661,7 +820,7 @@ bool CaptureDialog::selfTestLive(const QString& url, const QString& png)
     bool ok = btnDownload_->isEnabled();
     if (ok) {   // 一路測到下載完成
         btnDownload_->click();
-        for (int i = 0; i < 600 && (proc_ || lblStatus_->text().startsWith(QStringLiteral("下載第")) || lblStatus_->text().startsWith(QStringLiteral("讀取"))); ++i) {
+        for (int i = 0; i < 600 && (running_ > 0 || lblStatus_->text().startsWith(QStringLiteral("下載")) || lblStatus_->text().startsWith(QStringLiteral("讀取"))); ++i) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
             QThread::msleep(50);
         }

@@ -23,6 +23,7 @@ public partial class CaptureWindow : Window
         (_engine, _outDir, _ffmpegDir) = (engine, outDir, ffmpegDir);
         UrlBox.Text = startUrl;
         UpdateButtons();
+        if (startUrl.Length > 0) Loaded += (_, _) => Auto_Click(this, new RoutedEventArgs());   // 帶著網址開啟：直接自動擷取
     }
 
     private void Log(string text)
@@ -36,9 +37,12 @@ public partial class CaptureWindow : Window
         BtnDownload.IsEnabled = _candidates.Count > 0 && !_running;
         BtnStop.IsEnabled = _running || _browserOpen;
         BtnOpen.IsEnabled = !_browserOpen;
+        BtnAuto.IsEnabled = !_browserOpen && !_running;
     }
 
-    private void OpenBrowser_Click(object sender, RoutedEventArgs e)
+    private void OpenBrowser_Click(object sender, RoutedEventArgs e) => OpenBrowser();
+
+    private bool OpenBrowser()
     {
         _session = new CaptureSession();
         _session.Found += c => Dispatcher.BeginInvoke(() => OnFound(c));
@@ -51,10 +55,59 @@ public partial class CaptureWindow : Window
         {
             LblStatus.Text = ex.Message;
             Log(ex.Message);
-            return;
+            return false;
         }
         _browserOpen = true;
         UpdateButtons();
+        return true;
+    }
+
+    // 自動擷取：鎖定正在播放的長度 → 下載 → 長度比對。成功就關瀏覽器；要登入或比對不符就停下來交給使用者，原本的按鈕照常可用
+    private async void Auto_Click(object sender, RoutedEventArgs e)
+    {
+        if (_running || _browserOpen || !OpenBrowser()) return;
+        _running = true;
+        _cts = new CancellationTokenSource();
+        UpdateButtons();
+        Bar.Value = 0;
+        LblStatus.Text = "自動擷取中…";
+        try
+        {
+            var (path, reason, _) = await CaptureRunner.AutoCaptureAsync(
+                _session!, _outDir, _engine, _ffmpegDir,
+                t => Dispatcher.BeginInvoke(() => Log(t)),
+                p => Dispatcher.BeginInvoke(() => Bar.Value = Math.Clamp(p, 0, 100)),
+                t => Dispatcher.BeginInvoke(() => LblStatus.Text = t),
+                _cts.Token);
+            if (reason == "ok")
+            {
+                Bar.Value = 100;
+                await _session!.CloseBrowserAsync();
+                _browserOpen = false;
+                LblStatus.Text = "完成：" + path;
+                Log("自動擷取完成，已關閉瀏覽器。");
+            }
+            else
+            {
+                Bar.Value = 0;
+                var msg = reason switch
+                {
+                    "manual" => "一直沒有偵測到正在播放的影片，多半是需要登入或驗證：請在瀏覽器視窗操作（登入後播放影片），再按「下載擷取到的影片」。",
+                    "mismatch" => "下載到的影片長度和正在播放的不符，檔案先留著：請確認瀏覽器裡播放的是要的影片，再按「下載擷取到的影片」重試。",
+                    "failed" => "沒有下載到任何檔案，原因見下方紀錄。可在瀏覽器裡重新播放後再按「下載擷取到的影片」。",
+                    _ => "已停止。",
+                };
+                LblStatus.Text = msg;
+                Log(msg);
+            }
+        }
+        finally
+        {
+            _running = false;
+            _cts.Dispose();
+            _cts = null;
+            UpdateButtons();
+        }
     }
 
     private void OnFound(Candidate c)

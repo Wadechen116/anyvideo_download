@@ -45,6 +45,8 @@ public:
     void stop();   // 結束監聽（瀏覽器視窗不關）
     // 問頁面裡正在播放的 <video>：長度幾秒。用來分辨「使用者在看的那支」和預先載入的下一支。
     void queryPlayingVideo();
+    bool lastQueryPlaying() const { return lastPlaying_; }   // 上一次 queryPlayingVideo 讀到的那支是不是真的在播（沒暫停、播了一點）
+    void closeBrowser();   // 關掉整個瀏覽器（自動擷取成功後用；獨立設定檔的登入資訊會留著）
 
 signals:
     void playingVideo(double durationSeconds);   // 讀不到時是 -1
@@ -65,6 +67,7 @@ private:
     int getTargetsId_ = 0;
     QString startUrl_;      // 連上之後才導向，避免頁面在開始監聽前就載完而漏掉請求
     bool navigated_ = false;
+    bool lastPlaying_ = false;
     QHash<QString, MediaCandidate> seen_;
     QHash<QString, QString> sessions_;           // sessionId -> 目標類型（page、iframe、worker…）
     QHash<int, bool> pendingEval_;               // 還在等結果的 Runtime.evaluate
@@ -91,7 +94,13 @@ private:
     QList<MediaCandidate> pickCandidates() const;
     void downloadCaptured();
     void beginDownloads();
-    void downloadNext();
+    void startAuto();
+    void autoTick();
+    void autoVerify(const QString& path);
+    void autoFallback(const QString& msg);
+    void startItem(int i);
+    void pump();
+    void updateProgress();
     void finish();
     void stopAll();
     void updateButtons();
@@ -105,6 +114,7 @@ private:
 
     QLineEdit* urlEdit_ = nullptr;
     QPushButton* btnOpen_ = nullptr;
+    QPushButton* btnAuto_ = nullptr;
     QPushButton* btnDownload_ = nullptr;
     QPushButton* btnStop_ = nullptr;
     QLabel* lblFound_ = nullptr;
@@ -113,18 +123,31 @@ private:
     QPlainTextEdit* log_ = nullptr;
 
     QList<MediaCandidate> queue_;
-    QStringList files_;
     QString stamp_;
-    int index_ = 0;
+    struct Item {
+        QProcess* proc = nullptr;
+        QByteArray buf;
+        QTimer* stall = nullptr;       // 一段時間沒有任何輸出就當作卡住，略過這一項
+        QElapsedTimer clock;
+        int pct = 0;
+        bool retried = false;          // 已經因為偽裝元件失敗而改用預設方式重試過
+        QString file;
+    };
+    QList<Item*> items_;               // 和 queue_ 一一對應；合併時的挑選順序不受完成先後影響
+    // 自動擷取：偵測到正在播放的影片就鎖定長度 → 等影音到齊 → 下載 → 長度比對 → 成功就關瀏覽器
+    QTimer autoTimer_;
+    QElapsedTimer autoClock_, settleClock_;
+    int autoState_ = 0;                // 0 沒在自動、1 等正在播放的影片、2 等影音到齊
+    bool autoRun_ = false;             // 這一輪下載是自動擷取發起的
+    bool queryInFlight_ = false;
+    qsizetype settleCount_ = 0;
+    int nextIndex_ = 0;
+    int running_ = 0;                  // 正在下載的項目數
+    int doneCount_ = 0;
     bool cancelled_ = false;
     double targetDuration_ = -1;   // 使用者正在看的那支影片的長度（秒）；-1 = 不知道
     bool browserOpen_ = false;
     bool noImpersonate_ = false;      // 這個 yt-dlp 不能偽裝成瀏覽器：之後都不帶 --impersonate
-    bool impersonateFailed_ = false;
-    QProcess* proc_ = nullptr;
-    QTimer stall_;                 // 一段時間沒有任何輸出就當作卡住，略過這一項
-    QElapsedTimer itemClock_;
-    QByteArray buffer_;
 };
 
 }  // namespace avd

@@ -124,6 +124,9 @@ public sealed class CaptureSession : IDisposable
     public event Action<string>? Status;
 
     public string Profile { get; }
+    /// <summary>上一次 QueryPlayingVideoAsync 讀到的那支是不是真的在播（沒暫停、播了一點）。</summary>
+    public bool LastQueryPlaying { get; private set; }
+
     public IReadOnlyList<Candidate> Candidates { get { lock (_gate) return [.. _seen.Values]; } }
 
     /// <param name="profile">null：用 AVD_CAPTURE_PROFILE（測試用，不碰你平常的擷取設定檔），再沒有就用 %APPDATA%\anyvideo_download\capture-profile。</param>
@@ -355,14 +358,28 @@ public sealed class CaptureSession : IDisposable
         catch (Exception e) when (e is WebSocketException or OperationCanceledException) { return -1; }
         await Task.WhenAny(_evalDone!.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);        // 有頁面沒回應也不能一直等
         double duration = -1, best = -1;
+        var playingFound = false;
         lock (_gate)
             foreach (var v in _videos)
             {
                 var playing = v[1] == 0 && v[2] > 0.3;
                 var score = (playing ? 1e6 : 0) + v[2];
-                if (v[0] > 0 && score > best) { best = score; duration = v[0]; }
+                if (v[0] > 0 && score > best) { best = score; duration = v[0]; playingFound = playing; }
             }
+        LastQueryPlaying = playingFound;
         return duration;
+    }
+
+    /// <summary>關掉整個瀏覽器（自動擷取成功後用；獨立設定檔的登入資訊會留著）。</summary>
+    public async Task CloseBrowserAsync()
+    {
+        try
+        {
+            await SendAsync(NewId(), "Browser.close", new JsonObject(), null).ConfigureAwait(false);
+            await Task.Delay(300).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is WebSocketException or OperationCanceledException or ObjectDisposedException or InvalidOperationException) { }
+        Stop();
     }
 }
 
@@ -374,6 +391,8 @@ public static class CaptureRunner
         public double Pixels => (double)W * H;
         public double Bitrate => Dur > 0 ? Size * 8.0 / Dur : 0;
     }
+
+    private const int ParallelDownloads = 4;   // 同時下載幾個（太多會被 CDN 當成異常連線）
 
     private static readonly Regex Percent = new(@"\[download\]\s+([\d.]+)%", RegexOptions.Compiled);
 
@@ -398,41 +417,59 @@ public static class CaptureRunner
         if (queue.Count == 0) return null;
         Directory.CreateDirectory(outDir);
         var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
-        var files = new List<string>();
-        var noImpersonate = false;
-        for (var i = 0; i < queue.Count; i++)
+        var results = new string?[queue.Count];            // 依偵測順序存放，合併時的挑選順序不受完成先後影響
+        var percents = new double[queue.Count];
+        var noImpersonate = false;                         // 某一項發現這個 yt-dlp 不能偽裝成瀏覽器後，其餘項目都不帶 --impersonate
+        var doneCount = 0;
+        status?.Invoke($"同時下載 {queue.Count} 項（最多 {ParallelDownloads} 個一起）…");
+        using var gate = new SemaphoreSlim(ParallelDownloads);
+
+        async Task OneAsync(int i)
         {
-            if (ct.IsCancellationRequested) return null;
-            var c = queue[i];
-            status?.Invoke($"下載第 {i + 1}/{queue.Count} 項…");
-            log($"第 {i + 1}/{queue.Count} 項：[{c.Kind}] {(c.Size < 0 ? "大小未知" : (c.Size / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) + " MB")} {(c.Url.Length > 110 ? c.Url[..110] : c.Url)}");
-            var clock = Stopwatch.StartNew();
-            string? path;
-            while (true)
+            await gate.WaitAsync(ct).ConfigureAwait(false);
+            try
             {
-                var (code, file) = await DownloadOneAsync(c, Path.Combine(outDir, $"擷取_{stamp}_{i + 1}.%(ext)s"), engine, ffmpegDir, !noImpersonate, progress, ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested) return null;
-                // fbcdn 這類 CDN 對 yt-dlp 預設的連線特徵會限速（實測同一個 0.6 MB 檔案：預設 86 秒，偽裝成 Chrome 只要 2.5 秒），
-                // 所以先以 Chrome 身分連線；沒裝 curl_cffi 時 yt-dlp 會立刻報錯，那一項改用預設方式重試。
-                if (code != 0 && !noImpersonate && clock.ElapsedMilliseconds < 15000)
+                if (ct.IsCancellationRequested) return;
+                var c = queue[i];
+                log($"第 {i + 1}/{queue.Count} 項開始：[{c.Kind}] {(c.Size < 0 ? "大小未知" : (c.Size / 1048576.0).ToString("F1", CultureInfo.InvariantCulture) + " MB")} {(c.Url.Length > 110 ? c.Url[..110] : c.Url)}");
+                var clock = Stopwatch.StartNew();
+                void ItemProgress(double pct)
                 {
-                    noImpersonate = true;
-                    log("以 Chrome 身分連線失敗，改用預設方式重試這一項…");
-                    continue;
+                    if (progress is null) return;
+                    lock (percents)
+                    {
+                        percents[i] = pct;
+                        progress(percents.Sum() / percents.Length);
+                    }
                 }
-                path = code == 0 ? file : null;
-                break;
+                string? path;
+                while (true)
+                {
+                    var (code, file) = await DownloadOneAsync(c, Path.Combine(outDir, $"擷取_{stamp}_{i + 1}.%(ext)s"), engine, ffmpegDir, !Volatile.Read(ref noImpersonate), ItemProgress, ct).ConfigureAwait(false);
+                    if (ct.IsCancellationRequested) return;
+                    // fbcdn 這類 CDN 對 yt-dlp 預設的連線特徵會限速（實測同一個 0.6 MB 檔案：預設 86 秒，偽裝成 Chrome 只要 2.5 秒），
+                    // 所以先以 Chrome 身分連線；沒裝 curl_cffi 時 yt-dlp 會立刻報錯，那一項改用預設方式重試。
+                    if (code != 0 && !Volatile.Read(ref noImpersonate) && clock.ElapsedMilliseconds < 15000)
+                    {
+                        Volatile.Write(ref noImpersonate, true);
+                        log($"以 Chrome 身分連線失敗，改用預設方式重試第 {i + 1} 項…");
+                        continue;
+                    }
+                    path = code == 0 ? file : null;
+                    break;
+                }
+                results[i] = path;
+                lock (percents) percents[i] = 100;
+                log(path is not null ? $"第 {i + 1} 項完成（{clock.ElapsedMilliseconds / 1000} 秒）" : $"第 {i + 1} 項下載失敗");
+                status?.Invoke($"下載中：已完成 {Interlocked.Increment(ref doneCount)}/{queue.Count} 項…");
             }
-            if (path is not null)
-            {
-                files.Add(path);
-                log($"第 {i + 1} 項完成（{clock.ElapsedMilliseconds / 1000} 秒）");
-            }
-            else
-            {
-                log($"第 {i + 1} 項下載失敗");
-            }
+            finally { gate.Release(); }
         }
+
+        try { await Task.WhenAll(Enumerable.Range(0, queue.Count).Select(OneAsync)).ConfigureAwait(false); }
+        catch (OperationCanceledException) { return null; }
+        if (ct.IsCancellationRequested) return null;
+        var files = results.Where(r => r is not null).Select(r => r!).ToList();
         status?.Invoke("挑選最高畫質與音質，合併中…");
         return await ChooseAndMergeAsync(files, ffmpegDir, targetDuration, outDir, stamp, log).ConfigureAwait(false);
     }
@@ -586,6 +623,56 @@ public static class CaptureRunner
         foreach (var f in files) Remove(f);
         log("完成：" + outPath);
         return outPath;
+    }
+
+    private const int AutoWaitSeconds = 30;      // 自動擷取：等到「有影音、而且有一支正在播放」的時間上限；超過就交給使用者手動操作（多半要登入）
+    private const int AutoSettleMs = 2000;       // 偵測到的影音檔案這麼久沒再增加，就當作影像與聲音都到齊了
+
+    /// <summary>
+    /// 自動擷取（瀏覽器已開、網址已導向）：偵測到正在播放的影片就立刻鎖定它的長度，等影音到齊後下載，再用長度比對下載結果。
+    /// 原因："ok" 成功；"manual" 一直沒有正在播放的影片（多半要登入，交給使用者）；"mismatch" 下載了但長度不符；"failed" 沒下載到；"cancelled" 使用者停止。
+    /// </summary>
+    public static async Task<(string? Path, string Reason, double Target)> AutoCaptureAsync(
+        CaptureSession session, string outDir, Engine engine, string? ffmpegDir,
+        Action<string> log, Action<double>? progress = null, Action<string>? status = null, CancellationToken ct = default)
+    {
+        status?.Invoke("等待網頁開始播放影片…");
+        var deadline = DateTime.UtcNow.AddSeconds(AutoWaitSeconds);
+        double target = -1;
+        while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
+        {
+            if (session.Candidates.Count > 0)
+            {
+                var d = await session.QueryPlayingVideoAsync(2000).ConfigureAwait(false);
+                if (d > 0 && session.LastQueryPlaying) { target = d; break; }
+            }
+            await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
+        }
+        if (ct.IsCancellationRequested) return (null, "cancelled", target);
+        if (target <= 0) return (null, "manual", target);
+        log($"鎖定正在播放的影片長度：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
+        status?.Invoke("等待影像與聲音都出現…");
+        var count = session.Candidates.Count;
+        var changed = Stopwatch.StartNew();
+        var settle = Stopwatch.StartNew();
+        while (settle.ElapsedMilliseconds < 8000 && !ct.IsCancellationRequested)
+        {
+            if (session.Candidates.Count != count) { count = session.Candidates.Count; changed.Restart(); }
+            else if (changed.ElapsedMilliseconds >= AutoSettleMs) break;
+            await Task.Delay(200, CancellationToken.None).ConfigureAwait(false);
+        }
+        if (ct.IsCancellationRequested) return (null, "cancelled", target);
+        var path = await DownloadAndMergeAsync(session.Candidates, target, outDir, engine, ffmpegDir, log, progress, status, ct).ConfigureAwait(false);
+        if (ct.IsCancellationRequested) return (null, "cancelled", target);
+        if (path is null) return (null, "failed", target);
+        var got = (await ProbeAsync(path, ffmpegDir).ConfigureAwait(false)).Dur;
+        if (got > 0 && Math.Abs(got - target) <= Math.Max(0.6, target * 0.05))
+        {
+            log($"長度比對成功：下載 {got.ToString("F2", CultureInfo.InvariantCulture)} 秒，正在播放 {target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
+            return (path, "ok", target);
+        }
+        log($"長度比對不符：下載 {got.ToString("F2", CultureInfo.InvariantCulture)} 秒，正在播放 {target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
+        return (path, "mismatch", target);
     }
 
     /// <summary>不開介面：開瀏覽器載入網址、等影音出現、再等幾秒讓影像與聲音都出現、下載並合併。回傳結果路徑。給測試用。</summary>

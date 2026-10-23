@@ -71,6 +71,19 @@ public static class Program
             Out("note\t" + note);
             return 0;
         }
+        if (args.Length >= 4 && args[1] == "capture-auto")   // 測自動擷取：成功時印「完成：」並關掉瀏覽器；停在手動則結束代碼 1 且瀏覽器維持開著
+        {
+            var autoEngine = await Core.DetectEngineAsync();
+            if (!autoEngine.Ok) { Out("log\terror\t找不到下載核心 yt-dlp"); return 3; }
+            using var session = new CaptureSession();
+            session.Status += Out;
+            try { session.Start(args[2]); }
+            catch (InvalidOperationException e) { Out(e.Message); return 1; }
+            var (path, reason, _) = await CaptureRunner.AutoCaptureAsync(session, args[3], autoEngine, Core.FindFfmpegDir(), Out);
+            Out("reason\t" + reason);
+            if (reason == "ok") { await session.CloseBrowserAsync(); Out("完成：" + path); return 0; }
+            return 1;
+        }
         if (args.Length >= 4 && args[1] == "capture")
         {
             var captureEngine = await Core.DetectEngineAsync();

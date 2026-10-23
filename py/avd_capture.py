@@ -25,6 +25,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +33,7 @@ from typing import Callable
 
 _NO_WINDOW = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
 MAX_FILES = 12          # 最多下載幾個偵測到的檔案
+PARALLEL_DOWNLOADS = 4  # 同時下載幾個（太多會被 CDN 當成異常連線）
 
 
 # ─── 找出影音網址 ──────────────────────────────────────────────────────────
@@ -264,9 +266,8 @@ class CaptureSession:
                 old.referer = old.referer or c.referer
                 self.on_found(old)
 
-    def query_playing_video(self, timeout: float = 3.0) -> float:
-        """問頁面裡正在播放的 <video>：長度幾秒。正在播放的那支：沒暫停、已經播了一點的；沒有的話取播放進度最多的。
-        長度不明（直播等）或讀不到回傳 -1。"""
+    def query_videos(self, timeout: float = 3.0) -> list[list[float]]:
+        """頁面裡所有 <video>：[長度, 暫停(1/0), 目前時間, 寬, 高]；讀不到回傳空清單。"""
         expression = ("JSON.stringify([...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.duration)?v.duration:-1,"
                       "v.paused?1:0,v.currentTime,v.videoWidth,v.videoHeight]))")
         self._videos = []
@@ -278,17 +279,36 @@ class CaptureSession:
                     self._pending_eval.add(self._next_id)
                     self._send("Runtime.evaluate", {"expression": expression, "returnByValue": True}, sid)
                 except Exception:  # noqa: BLE001
-                    return -1
+                    return []
         if not self._pending_eval:
-            return -1
+            return []
         self._eval_done.wait(timeout)                  # 有頁面沒回應也不能一直等
-        duration, best = -1.0, -1.0
-        for v in list(self._videos):
-            playing = v[1] == 0 and v[2] > 0.3
-            score = (1e6 if playing else 0) + v[2]
-            if v[0] > 0 and score > best:
-                best, duration = score, v[0]
-        return duration
+        return list(self._videos)
+
+    def query_playing_video(self, timeout: float = 3.0) -> float:
+        """問頁面裡正在播放的 <video>：長度幾秒。正在播放的那支：沒暫停、已經播了一點的；沒有的話取播放進度最多的。
+        長度不明（直播等）或讀不到回傳 -1。"""
+        return playing_duration(self.query_videos(timeout))[0]
+
+    def close_browser(self) -> None:
+        """關掉整個瀏覽器（自動擷取成功後用；獨立設定檔的登入資訊會留著）。"""
+        try:
+            self._send("Browser.close")
+            time.sleep(0.3)
+        except Exception:  # noqa: BLE001
+            pass
+        self.stop()
+
+
+def playing_duration(videos: list[list[float]]) -> tuple[float, bool]:
+    """(正在播放的那支的長度, 是不是真的在播)。沒在播的話退而取播放進度最多的，第二個值為 False。"""
+    duration, best, playing_found = -1.0, -1.0, False
+    for v in videos:
+        playing = v[1] == 0 and v[2] > 0.3
+        score = (1e6 if playing else 0) + v[2]
+        if v[0] > 0 and score > best:
+            best, duration, playing_found = score, v[0], playing
+    return duration, playing_found
 
 
 # ─── 下載、挑選、合併 ──────────────────────────────────────────────────────
@@ -501,27 +521,109 @@ def download_and_merge(candidates: list[Candidate], target_duration: float, out_
         return None
     Path(out_dir).mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    files: list[str] = []
-    for i, c in enumerate(queue, 1):
+    total = len(queue)
+    results: list[str | None] = [None] * total      # 依偵測順序存放，合併時的挑選順序不受完成先後影響
+    percents = [0.0] * total
+    lock = threading.Lock()
+    done_count = 0
+
+    def one(i: int, c: Candidate) -> None:
+        nonlocal done_count
         if cancel is not None and cancel.is_set():
-            return None
-        if status:
-            status(f"下載第 {i}/{len(queue)} 項…")
+            return
         size = "大小未知" if c.size < 0 else f"{c.size / 1048576:.1f} MB"
-        log(f"第 {i}/{len(queue)} 項：[{c.kind}] {size} {c.url[:110]}")
+        log(f"第 {i + 1}/{total} 項開始：[{c.kind}] {size} {c.url[:110]}")
         t0 = time.monotonic()
+
+        def item_progress(p: float) -> None:
+            if progress:
+                with lock:
+                    percents[i] = p
+                    progress(sum(percents) / total)
+        path = download_one(c, str(Path(out_dir) / f"擷取_{stamp}_{i + 1}.%(ext)s"), ffmpeg_dir, log,
+                            item_progress, cancel)
+        with lock:
+            percents[i] = 100.0
+            results[i] = path
+            done_count += 1
+            n = done_count
+        log(f"第 {i + 1} 項{'完成' if path else '失敗'}（{int(time.monotonic() - t0)} 秒）")
+        if status:
+            status(f"下載中：已完成 {n}/{total} 項…")
+
+    if status:
+        status(f"同時下載 {total} 項（最多 {PARALLEL_DOWNLOADS} 個一起）…")
+    with ThreadPoolExecutor(max_workers=min(PARALLEL_DOWNLOADS, total)) as pool:
+        futures = [pool.submit(one, i, c) for i, c in enumerate(queue)]
         try:
-            path = download_one(c, str(Path(out_dir) / f"擷取_{stamp}_{i}.%(ext)s"), ffmpeg_dir, log, progress, cancel)
+            for f in futures:
+                f.result()
         except DownloadCancelled:
+            for f in futures:
+                f.cancel()
             return None
-        if path:
-            files.append(path)
-            log(f"第 {i} 項完成（{int(time.monotonic() - t0)} 秒）")
+    files = [r for r in results if r]
     if cancel is not None and cancel.is_set():
         return None
     if status:
         status("挑選最高畫質與音質，合併中…")
     return choose_and_merge(files, ffmpeg_dir, target_duration, out_dir, stamp, log)
+
+
+AUTO_WAIT_SECONDS = 30      # 自動擷取：等到「有影音、而且有一支正在播放」的時間上限；超過就當作需要使用者手動操作（多半是要登入）
+AUTO_SETTLE_SECONDS = 2.0   # 偵測到的影音檔案這麼久沒再增加，就當作影像與聲音都到齊了
+
+
+def auto_capture(session: CaptureSession, out_dir: str, ffmpeg_dir: str | None, log: Callable[[str], None],
+                 progress: Callable[[float], None] | None = None, status: Callable[[str], None] | None = None,
+                 cancel: threading.Event | None = None) -> tuple[str | None, str]:
+    """自動擷取（瀏覽器已開、網址已導向）：偵測到正在播放的影片就立刻鎖定它的長度，等影音到齊後下載，
+    再用長度比對下載結果。回傳 (路徑, 原因)：原因 "ok" 成功；"manual" 一直沒有正在播放的影片（多半要登入，交給使用者）；
+    "mismatch" 下載了但長度不符；"failed" 沒下載到；"cancelled" 使用者停止。"""
+    def cancelled() -> bool:
+        return cancel is not None and cancel.is_set()
+
+    def say(t: str) -> None:
+        if status:
+            status(t)
+    say("等待網頁開始播放影片…")
+    deadline = time.monotonic() + AUTO_WAIT_SECONDS
+    target = -1.0
+    while time.monotonic() < deadline and not cancelled():
+        if session.seen:
+            target, playing = playing_duration(session.query_videos(2.0))
+            if playing and target > 0:
+                break
+            target = -1.0
+        time.sleep(0.5)
+    if cancelled():
+        return None, "cancelled"
+    if target <= 0:
+        return None, "manual"
+    log(f"鎖定正在播放的影片長度：{target:.2f} 秒")
+    say("等待影像與聲音都出現…")
+    last_count, last_change = len(session.seen), time.monotonic()
+    settle_deadline = time.monotonic() + 8
+    while time.monotonic() < settle_deadline and not cancelled():
+        if len(session.seen) != last_count:
+            last_count, last_change = len(session.seen), time.monotonic()
+        elif time.monotonic() - last_change >= AUTO_SETTLE_SECONDS:
+            break
+        time.sleep(0.2)
+    if cancelled():
+        return None, "cancelled"
+    path = download_and_merge(list(session.seen.values()), target, out_dir, ffmpeg_dir, log, progress, status, cancel)
+    if cancelled():
+        return None, "cancelled"
+    if not path:
+        return None, "failed"
+    got = probe_file(path, ffmpeg_dir).dur
+    tolerance = max(0.6, target * 0.05)
+    if got > 0 and abs(got - target) <= tolerance:
+        log(f"長度比對成功：下載 {got:.2f} 秒，正在播放 {target:.2f} 秒")
+        return path, "ok"
+    log(f"長度比對不符：下載 {got:.2f} 秒，正在播放 {target:.2f} 秒")
+    return path, "mismatch"
 
 
 def run_headless(url: str, out_dir: str, wait_seconds: float = 4, profile: str | None = None,
@@ -587,6 +689,8 @@ def _make_dialog_class():
             row.pack(fill="x", pady=(8, 0))
             self.var_url = tk.StringVar(value=start_url)
             ttk.Entry(row, textvariable=self.var_url).pack(side="left", fill="x", expand=True)
+            self.btn_auto = ttk.Button(row, text="自動擷取", command=lambda: self._open_browser(auto=True))
+            self.btn_auto.pack(side="left", padx=(6, 0))
             self.btn_open = ttk.Button(row, text="開啟瀏覽器", command=self._open_browser)
             self.btn_open.pack(side="left", padx=(6, 0))
             self.lbl_found = ttk.Label(f, text="尚未偵測到影音", font=("TkDefaultFont", 10, "bold"))
@@ -606,6 +710,8 @@ def _make_dialog_class():
             self.log.pack(fill="both", expand=True, pady=(6, 0))
             self.protocol("WM_DELETE_WINDOW", self._close)
             self.after(100, self._poll)
+            if start_url:
+                self.after(300, lambda: self._open_browser(auto=True))   # 帶著網址開啟：直接自動擷取
 
         # ── 動作 ──
         def _log(self, text: str) -> None:
@@ -619,8 +725,11 @@ def _make_dialog_class():
             self.btn_dl.configure(state="normal" if self.candidates and not running else "disabled")
             self.btn_stop.configure(state="normal" if running or self.browser_open else "disabled")
             self.btn_open.configure(state="disabled" if self.browser_open else "normal")
+            self.btn_auto.configure(state="disabled" if self.browser_open or running else "normal")
 
-        def _open_browser(self) -> None:
+        def _open_browser(self, auto: bool = False) -> None:
+            if self.browser_open:
+                return
             self.session = CaptureSession(lambda c: self.q.put(("found", c)), lambda t: self.q.put(("status", t)))
             try:
                 self.session.start(self.var_url.get().strip())
@@ -629,7 +738,22 @@ def _make_dialog_class():
                 self._log(str(e))
                 return
             self.browser_open = True
+            if auto:
+                self._auto_capture()
             self._buttons()
+
+        def _auto_capture(self) -> None:
+            """開著的瀏覽器：自動鎖定長度、下載、比對。成功就關瀏覽器；要登入或比對不符就停下來交給使用者。"""
+            self.cancel.clear()
+            self.result = None
+            self.lbl_status.configure(text="自動擷取中…")
+
+            def work() -> None:
+                path, reason = auto_capture(self.session, self.out_dir, self.ffmpeg_dir, lambda t: self.q.put(("log", t)),
+                                            lambda p: self.q.put(("progress", p)), lambda t: self.q.put(("status", t)), self.cancel)
+                self.q.put(("auto_done", (path, reason)))
+            self.job = threading.Thread(target=work, daemon=True)
+            self.job.start()
 
         def _download(self) -> None:
             if self.job is not None and self.job.is_alive():
@@ -684,6 +808,25 @@ def _make_dialog_class():
                         self._log(arg)
                     elif kind == "progress":
                         self.bar["value"] = max(0.0, min(100.0, arg))
+                    elif kind == "auto_done":
+                        path, reason = arg
+                        if reason == "ok":
+                            self.result = path
+                            self.bar["value"] = 100
+                            if self.session:
+                                self.session.close_browser()
+                            self.browser_open = False
+                            self.lbl_status.configure(text="完成：" + path)
+                            self._log("自動擷取完成，已關閉瀏覽器。")
+                        else:
+                            self.bar["value"] = 0
+                            msg = {"manual": "一直沒有偵測到正在播放的影片，多半是需要登入或驗證：請在瀏覽器視窗操作（登入後播放影片），再按「下載擷取到的影片」。",
+                                   "mismatch": "下載到的影片長度和正在播放的不符，檔案先留著：請確認瀏覽器裡播放的是要的影片，再按「下載擷取到的影片」重試。",
+                                   "failed": "沒有下載到任何檔案，原因見下方紀錄。可在瀏覽器裡重新播放後再按「下載擷取到的影片」。",
+                                   "cancelled": "已停止。"}[reason]
+                            self.lbl_status.configure(text=msg)
+                            self._log(msg)
+                        self._buttons()
                     elif kind == "done":
                         self.result = arg
                         self.bar["value"] = 100 if arg else 0

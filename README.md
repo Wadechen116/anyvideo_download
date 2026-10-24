@@ -32,7 +32,7 @@
 - **相容優先的「沒有 H.264 就重新編碼」**：Python 版寫成自訂的後處理器；命令列沒辦法
   塞自訂程式碼，所以同樣的邏輯做成 yt-dlp 外掛放在 `shared\yt-dlp-plugins`，建置時複製到
   Qt 版與 C# 版的執行檔旁邊。
-- **cookies.txt**：可指定匯出的 cookies.txt 檔（設定 `cookies_file`），檔案存在時優先於「登入狀態」的瀏覽器 cookies；檔案不存在則忽略。下載與解析都適用，下載前的設定檢查會提醒檔案不見了。
+- **cookies.txt**：可指定匯出的 cookies.txt 檔（設定 `cookies_file`），檔案存在時優先於「登入狀態」的瀏覽器 cookies；檔案不存在則忽略。下載與解析都適用，下載前的設定檢查會提醒檔案不見了。按「自動偵測」會在「下載」「桌面」「文件」、程式資料夾與儲存位置（不含子資料夾）找匯出的 cookies.txt，含抖音／TikTok cookies 的、檔名有 cookie 的、較新的優先，並自動填入路徑。
 - **設定檔共用**：`%APPDATA%\anyvideo_download\settings.json`，換版本使用時設定沿用。
 
 ### Qt 版與 C# 版多做的事

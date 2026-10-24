@@ -139,6 +139,90 @@ def usable_cookies_file(s: Settings) -> str:
     return p if p and Path(p).is_file() else ""
 
 
+COOKIE_MAX_BYTES = 5 * 1024 * 1024
+
+
+def _read_cookie_candidate(path: str) -> tuple[bool, bool]:
+    """(是不是 cookies.txt, 內容有沒有抖音／TikTok 的 cookie)。不合格或讀不到回傳 (False, False)。"""
+    try:
+        if os.path.getsize(path) > COOKIE_MAX_BYTES:
+            return False, False
+        with open(path, "rb") as f:
+            data = f.read(COOKIE_MAX_BYTES + 1)
+    except OSError:
+        return False, False
+    if not data or len(data) > COOKIE_MAX_BYTES:
+        return False, False
+    text = data.decode("utf-8", "ignore").lstrip("\ufeff")
+    valid = "Netscape HTTP Cookie File" in text[:4096] or "HTTP Cookie File" in text[:4096]
+    if not valid:
+        for line in text.split("\n"):
+            line = line.rstrip("\r")
+            if not line.strip():
+                continue
+            if line.startswith("#HttpOnly_"):
+                line = line[len("#HttpOnly_"):]
+            if not line.startswith("#") and len(line.split("\t")) == 7:
+                valid = True
+                break
+    if not valid:
+        return False, False
+    return True, ("douyin.com" in text or "tiktok.com" in text)
+
+
+def cookie_file_has_douyin(path: str) -> bool:
+    return _read_cookie_candidate(path)[1]
+
+
+def detect_cookie_files(dirs: list[str]) -> list[str]:
+    """在指定資料夾（不含子資料夾）找匯出的 cookies.txt，回傳有效的檔案，最適合的排最前面。
+    排序：含 douyin.com／tiktok.com → 檔名含 cookie → 修改時間新的 → 路徑字母順序。"""
+    seen: set[str] = set()
+    found: list[tuple[bool, bool, float, str]] = []
+    for d in dirs:
+        if not d:
+            continue
+        try:
+            names = os.listdir(d)
+        except OSError:
+            continue
+        for name in names:
+            if not name.lower().endswith(".txt"):
+                continue
+            path = os.path.abspath(os.path.join(d, name))
+            key = os.path.normcase(path)
+            if key in seen or not os.path.isfile(path):
+                continue
+            seen.add(key)
+            valid, douyin = _read_cookie_candidate(path)
+            if not valid:
+                continue
+            try:
+                mtime = os.path.getmtime(path)
+            except OSError:
+                continue
+            found.append((douyin, "cookie" in name.lower(), mtime, path))
+    found.sort(key=lambda t: (not t[0], not t[1], -t[2], t[3]))
+    return [t[3] for t in found]
+
+
+def default_cookie_dirs(out_dir: str = "") -> list[str]:
+    """自動偵測 cookies.txt 要找的資料夾。"""
+    home = os.environ.get("USERPROFILE") or str(Path.home())
+    dirs = [os.path.join(home, "Downloads"), os.path.join(home, "Desktop"), os.path.join(home, "Documents")]
+    for var in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        od = os.environ.get(var)
+        if od:
+            dirs += [os.path.join(od, "Downloads"), os.path.join(od, "Desktop"), os.path.join(od, "Documents")]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        dirs.append(os.path.join(appdata, "anyvideo_download"))
+    if (out_dir or "").strip():
+        dirs.append(out_dir.strip())
+    dirs.append(str(Path(__file__).resolve().parent))
+    return dirs
+
+
 def apply_cookie_options(opts: dict, s: Settings) -> None:
     """cookies.txt 優先（同時給瀏覽器會去讀被鎖住的資料庫而出錯），否則用瀏覽器 cookies。"""
     cf = usable_cookies_file(s)
@@ -1135,8 +1219,14 @@ class App(tk.Tk):
         ck.grid(row=6, column=1, columnspan=5, sticky="ew", pady=(8, 0))
         ck.columnconfigure(0, weight=1)
         ttk.Entry(ck, textvariable=self.var_cookies, state="readonly").grid(row=0, column=0, sticky="ew")
-        ttk.Button(ck, text="選擇…", command=self._choose_cookies).grid(row=0, column=1, padx=4)
-        ttk.Button(ck, text="清除", command=lambda: self.var_cookies.set("")).grid(row=0, column=2)
+        self.cookie_btns = [
+            ttk.Button(ck, text="選擇…", command=self._choose_cookies),
+            ttk.Button(ck, text="自動偵測", command=self._detect_cookies),
+            ttk.Button(ck, text="清除", command=lambda: self.var_cookies.set("")),
+        ]
+        self.cookie_btns[0].grid(row=0, column=1, padx=4)
+        self.cookie_btns[1].grid(row=0, column=2)
+        self.cookie_btns[2].grid(row=0, column=3, padx=(4, 0))
 
         self.var_outdir = tk.StringVar()
         ttk.Label(f_opt, text="儲存位置").grid(row=7, column=0, sticky="w", pady=(8, 0))
@@ -1325,6 +1415,20 @@ class App(tk.Tk):
         if f:
             self.var_cookies.set(str(Path(f)))
 
+    def _detect_cookies(self) -> None:
+        if self.busy:
+            return
+        found = detect_cookie_files(default_cookie_dirs(self.var_outdir.get()))
+        if not found:
+            messagebox.showinfo(APP_NAME, "找不到 cookies.txt。\n\n請先用瀏覽器擴充功能（例如 Get cookies.txt LOCALLY）在 douyin.com 匯出，"
+                                          "檔案放在「下載」資料夾，再按一次自動偵測。")
+            return
+        best = found[0]
+        self.var_cookies.set(best)
+        when = datetime.fromtimestamp(os.path.getmtime(best)).strftime("%Y-%m-%d %H:%M")
+        messagebox.showinfo(APP_NAME, f"已選用：{best}\n修改時間：{when}\n含抖音/TikTok cookies："
+                                      f"{'是' if cookie_file_has_douyin(best) else '否'}\n\n共找到 {len(found)} 個可用的檔案。")
+
     def _open_dir(self) -> None:
         d = Path(self.var_outdir.get())
         if not d.exists():
@@ -1436,6 +1540,8 @@ class App(tk.Tk):
         self.btn_update.configure(state="disabled" if busy else "normal")
         self.btn_capture.configure(state="disabled" if busy else "normal")
         self.btn_cancel.configure(state="normal" if busy else "disabled")
+        for b in self.cookie_btns:
+            b.configure(state="disabled" if busy else "normal")
         self.url_text.configure(state="disabled" if busy else "normal")
         self._update_option_states()
         if not busy:

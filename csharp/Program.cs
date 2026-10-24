@@ -9,6 +9,7 @@
 //   AnyVideoDownload.exe --headless urls     <文字檔>                  印出從文字裡找到的每個網址：「平台<Tab>改寫後的網址」
 //   AnyVideoDownload.exe --headless guard    <settings.json> [free=位元組] [writable=0|1]  印出下載前防呆找到的問題，與修正後的設定
 //   AnyVideoDownload.exe --headless resolve  <網址> [主機...]          展開短連結（額外列出的主機也當短連結，讓測試能用本機伺服器）
+//   AnyVideoDownload.exe --headless cookies-detect <資料夾>...         自動偵測 cookies.txt，印出「found<Tab>路徑」，最適合的在前
 //   AnyVideoDownload.exe --headless capture  <網址> <輸出資料夾> [等幾秒]  從瀏覽器擷取（開瀏覽器載入網址、等影音出現、下載並合併）
 using System.IO;
 using System.Text;
@@ -38,6 +39,11 @@ public static class Program
         };
         void Out(string line) => stdout.WriteLine(line);
 
+        if (args.Length >= 2 && args[1] == "cookies-detect")   // 只在給定的資料夾找 cookies.txt，一行一個：found<Tab>絕對路徑
+        {
+            foreach (var p in CookieDetect.Detect(args.Skip(2))) Out("found\t" + p);
+            return 0;
+        }
         if (args.Length >= 3 && args[1] == "urls")
         {
             foreach (var u in Platforms.ExtractUrls(File.ReadAllText(args[2], Encoding.UTF8)))

@@ -130,6 +130,9 @@
                 <TextBlock Grid.Row="6" Grid.Column="0" Text="cookies.txt" Style="{StaticResource FieldLabel}" />
                 <DockPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,4,0,0">
                     <Button x:Name="BtnCookiesClear" DockPanel.Dock="Right" Content="清除" Margin="0" Click="ClearCookies_Click" />
+                    <Button x:Name="BtnCookiesAuto" DockPanel.Dock="Right" Content="自動偵測" Margin="6,0,0,0" Click="AutoCookies_Click"
+                            AutomationProperties.Name="自動偵測 cookies.txt"
+                            ToolTip="在「下載」「桌面」「文件」等資料夾找匯出的 cookies.txt" />
                     <Button x:Name="BtnCookiesPick" DockPanel.Dock="Right" Content="選擇…" Margin="6,0" Click="ChooseCookies_Click" />
                     <TextBox x:Name="CookiesBox" IsReadOnly="True" VerticalContentAlignment="Center"
                              AutomationProperties.Name="cookies.txt"

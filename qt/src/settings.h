@@ -65,6 +65,14 @@ bool hasLabel(const QList<Choice>& choices, const QString& label);
 
 QString settingsPath();
 
+// 在這些資料夾（不含子資料夾）找匯出的 cookies.txt（Netscape 格式），回傳有效的檔案，最好的在前。
+// 排序：含 douyin.com／tiktok.com 的優先 → 檔名含 cookie 的優先 → 較新的優先 → 路徑字串遞增。
+QStringList detectCookieFiles(const QStringList& dirs);
+// 預設的搜尋資料夾：下載、桌面、文件、%APPDATA%\anyvideo_download、目前的輸出資料夾、程式所在資料夾
+QStringList defaultCookieDirs(const QString& outDir);
+// 檔案內容是否含 douyin.com／tiktok.com
+bool cookieFileHasDouyin(const QString& path);
+
 struct Settings {
     QString outDir;
     QString mode = "video";      // "video" 或 "audio"

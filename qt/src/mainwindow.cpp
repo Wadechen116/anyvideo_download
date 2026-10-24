@@ -13,6 +13,7 @@
 #include <QDesktopServices>
 #include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHash>
@@ -190,11 +191,14 @@ void MainWindow::buildUi()
     cookiesFile_->setPlaceholderText("（未選擇）選了檔案就優先使用它，不再讀瀏覽器 cookies");
     btnCookiesPick_ = new QPushButton("選擇…");
     btnCookiesClear_ = new QPushButton("清除");
+    btnCookiesAuto_ = new QPushButton("自動偵測");
+    connect(btnCookiesAuto_, &QPushButton::clicked, this, &MainWindow::autoDetectCookies);
     connect(btnCookiesPick_, &QPushButton::clicked, this, &MainWindow::chooseCookiesFile);
     connect(btnCookiesClear_, &QPushButton::clicked, this, [this] { cookiesFile_->clear(); });
     ckRow->addWidget(cookiesFile_, 1);
     ckRow->addWidget(btnCookiesPick_);
     ckRow->addWidget(btnCookiesClear_);
+    ckRow->addWidget(btnCookiesAuto_);
     grid->addLayout(ckRow, 6, 1, 1, 5);
 
     grid->addWidget(new QLabel("儲存位置"), 7, 0);
@@ -268,6 +272,7 @@ void MainWindow::buildUi()
     cookiesFile_->setAccessibleName("cookies.txt");
     btnCookiesPick_->setAccessibleName("選擇 cookies.txt");
     btnCookiesClear_->setAccessibleName("清除 cookies.txt");
+    btnCookiesAuto_->setAccessibleName("自動偵測 cookies.txt");
     outDir_->setAccessibleName("儲存位置");
     log_->setAccessibleName("紀錄");
 }
@@ -332,7 +337,7 @@ void MainWindow::updateOptionStates()
                        static_cast<QWidget*>(chkPlaylist_), static_cast<QWidget*>(chkMeta_),
                        static_cast<QWidget*>(cbBrowser_), static_cast<QWidget*>(outDir_),
                        static_cast<QWidget*>(btnBrowse_), static_cast<QWidget*>(btnCookiesPick_),
-                       static_cast<QWidget*>(btnCookiesClear_)})
+                       static_cast<QWidget*>(btnCookiesClear_), static_cast<QWidget*>(btnCookiesAuto_)})
         w->setEnabled(idle);
     urlEdit_->setReadOnly(busy_);
 
@@ -439,6 +444,24 @@ void MainWindow::chooseCookiesFile()
     const QString start = cur.isEmpty() ? QDir::homePath() : cur;
     const QString f = QFileDialog::getOpenFileName(this, "選擇 cookies.txt", start, "cookies (*.txt);;所有檔案 (*)");
     if (!f.isEmpty()) cookiesFile_->setText(QDir::toNativeSeparators(f));
+}
+
+void MainWindow::autoDetectCookies()
+{
+    const QStringList found = avd::detectCookieFiles(avd::defaultCookieDirs(outDir_->text()));
+    if (found.isEmpty()) {
+        QMessageBox::information(this, "自動偵測",
+            QStringLiteral("找不到 cookies.txt。\n\n請先用瀏覽器擴充功能（例如 Get cookies.txt LOCALLY）在 douyin.com 匯出，"
+                           "檔案放在「下載」資料夾，再按一次自動偵測。"));
+        return;
+    }
+    const QString best = found.first();
+    cookiesFile_->setText(best);
+    QMessageBox::information(this, "自動偵測",
+        QStringLiteral("已選用：%1\n修改時間：%2\n含抖音/TikTok cookies：%3\n\n共找到 %4 個可用的檔案。")
+            .arg(best, QFileInfo(best).lastModified().toString("yyyy-MM-dd HH:mm"),
+                 avd::cookieFileHasDouyin(best) ? QStringLiteral("是") : QStringLiteral("否"))
+            .arg(found.size()));
 }
 
 void MainWindow::openDir()

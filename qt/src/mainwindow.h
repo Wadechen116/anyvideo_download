@@ -37,6 +37,7 @@ private:
     void pasteUrls();
     void chooseDir();
     void chooseCookiesFile();
+    void autoDetectCookies();
     void openDir();
     void probe();
     void startDownload();
@@ -78,6 +79,7 @@ private:
     QLineEdit* cookiesFile_ = nullptr;
     QPushButton* btnCookiesPick_ = nullptr;
     QPushButton* btnCookiesClear_ = nullptr;
+    QPushButton* btnCookiesAuto_ = nullptr;
     QLineEdit* outDir_ = nullptr;
     QPushButton* btnBrowse_ = nullptr;
     QPushButton* btnStart_ = nullptr;

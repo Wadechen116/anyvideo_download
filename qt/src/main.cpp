@@ -54,6 +54,11 @@ int headless(int argc, char* argv[])
         return 0;
     }
     // guard <settings.json> [free=位元組] [writable=0|1]：印出下載前防呆找到的問題，與修正後的設定（測試用）
+    // cookies-detect <資料夾>...：只在這些資料夾找 cookies.txt，一行一個「found<Tab>路徑」，最好的在前
+    if (a.size() >= 4 && a[2] == "cookies-detect") {
+        for (const QString& p : detectCookieFiles(a.mid(3))) out("found\t" + p);
+        return 0;
+    }
     if (a.size() >= 4 && a[2] == "guard") {
         const Settings gs = Settings::loadFrom(a[3]);
         DirProbe probe;

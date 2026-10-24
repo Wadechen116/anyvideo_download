@@ -132,7 +132,7 @@ public partial class MainWindow : Window
         var target = video ? (original ? "" : container) : audioFormat;
         ChkThumb.IsEnabled = idle && Options.ThumbOk.Contains(target);       // 容器還不知道時（原始品質、原始音訊）不嵌封面
         ChkSubs.IsEnabled = idle && video && (original || Options.SubsOk.Contains(container));
-        foreach (UIElement el in new UIElement[] { RbVideo, RbAudio, ChkPlaylist, ChkMeta, CbBrowser, CookiesBox, BtnCookiesPick, BtnCookiesClear, OutDirBox, BtnBrowse })
+        foreach (UIElement el in new UIElement[] { RbVideo, RbAudio, ChkPlaylist, ChkMeta, CbBrowser, CookiesBox, BtnCookiesAuto, BtnCookiesPick, BtnCookiesClear, OutDirBox, BtnBrowse })
             el.IsEnabled = idle;
         UrlBox.IsReadOnly = _busy;
 
@@ -228,6 +228,24 @@ public partial class MainWindow : Window
         }
         catch (ArgumentException) { }
         if (dlg.ShowDialog(this) == true) CookiesBox.Text = dlg.FileName;
+    }
+
+    private void AutoCookies_Click(object sender, RoutedEventArgs e)
+    {
+        if (_busy) return;
+        var found = CookieDetect.Detect(CookieDetect.DefaultDirs(OutDirBox.Text));
+        if (found.Count == 0)
+        {
+            MessageBox.Show(this, "找不到 cookies.txt。\n\n請先用瀏覽器擴充功能（例如 Get cookies.txt LOCALLY）在 douyin.com 匯出，檔案放在「下載」資料夾，再按一次自動偵測。",
+                Options.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var best = found[0];
+        CookiesBox.Text = best;
+        var mtime = File.GetLastWriteTime(best).ToString("yyyy-MM-dd HH:mm");
+        var dy = CookieDetect.HasDouyinTiktok(best) ? "是" : "否";
+        MessageBox.Show(this, $"已選用：{best}\n修改時間：{mtime}\n含抖音/TikTok cookies：{dy}\n\n共找到 {found.Count} 個可用的檔案。",
+            Options.AppName, MessageBoxButton.OK, MessageBoxImage.Information);
     }
 
     private void ClearCookies_Click(object sender, RoutedEventArgs e) => CookiesBox.Text = "";

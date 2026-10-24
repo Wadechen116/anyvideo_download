@@ -183,7 +183,21 @@ void MainWindow::buildUi()
     grid->addWidget(cbBrowser_, 5, 1);
     grid->addWidget(hint("需要登入才能看的內容，借用瀏覽器已登入的 cookies"), 5, 2, 1, 4);
 
-    grid->addWidget(new QLabel("儲存位置"), 6, 0);
+    grid->addWidget(new QLabel("cookies.txt"), 6, 0);
+    auto* ckRow = new QHBoxLayout;
+    cookiesFile_ = new QLineEdit;
+    cookiesFile_->setReadOnly(true);
+    cookiesFile_->setPlaceholderText("（未選擇）選了檔案就優先使用它，不再讀瀏覽器 cookies");
+    btnCookiesPick_ = new QPushButton("選擇…");
+    btnCookiesClear_ = new QPushButton("清除");
+    connect(btnCookiesPick_, &QPushButton::clicked, this, &MainWindow::chooseCookiesFile);
+    connect(btnCookiesClear_, &QPushButton::clicked, this, [this] { cookiesFile_->clear(); });
+    ckRow->addWidget(cookiesFile_, 1);
+    ckRow->addWidget(btnCookiesPick_);
+    ckRow->addWidget(btnCookiesClear_);
+    grid->addLayout(ckRow, 6, 1, 1, 5);
+
+    grid->addWidget(new QLabel("儲存位置"), 7, 0);
     auto* outRow = new QHBoxLayout;
     outDir_ = new QLineEdit;
     btnBrowse_ = new QPushButton("瀏覽…");
@@ -193,7 +207,7 @@ void MainWindow::buildUi()
     outRow->addWidget(outDir_, 1);
     outRow->addWidget(btnBrowse_);
     outRow->addWidget(btnOpen);
-    grid->addLayout(outRow, 6, 1, 1, 5);
+    grid->addLayout(outRow, 7, 1, 1, 5);
     root->addWidget(gOpt);
 
     // 動作
@@ -251,6 +265,9 @@ void MainWindow::buildUi()
     cbAudioFormat_->setAccessibleName("音訊格式");
     cbBitrate_->setAccessibleName("位元率");
     cbBrowser_->setAccessibleName("登入狀態");
+    cookiesFile_->setAccessibleName("cookies.txt");
+    btnCookiesPick_->setAccessibleName("選擇 cookies.txt");
+    btnCookiesClear_->setAccessibleName("清除 cookies.txt");
     outDir_->setAccessibleName("儲存位置");
     log_->setAccessibleName("紀錄");
 }
@@ -272,6 +289,7 @@ void MainWindow::loadSettingsIntoUi()
     chkThumb_->setChecked(s.embedThumb);
     chkSubs_->setChecked(s.embedSubs);
     cbBrowser_->setCurrentText(hasLabel(kBrowsers, s.browser) ? s.browser : kBrowsers[0].label);
+    cookiesFile_->setText(s.cookiesFile);
     outDir_->setText(s.outDir);
 }
 
@@ -290,6 +308,7 @@ Settings MainWindow::collectSettings()
     s.embedThumb = chkThumb_->isChecked();
     s.embedSubs = chkSubs_->isChecked();
     s.browser = cbBrowser_->currentText();
+    s.cookiesFile = cookiesFile_->text().trimmed();
     settings_ = s;
     return s;
 }
@@ -312,7 +331,8 @@ void MainWindow::updateOptionStates()
     for (QWidget* w : {static_cast<QWidget*>(rbVideo_), static_cast<QWidget*>(rbAudio_),
                        static_cast<QWidget*>(chkPlaylist_), static_cast<QWidget*>(chkMeta_),
                        static_cast<QWidget*>(cbBrowser_), static_cast<QWidget*>(outDir_),
-                       static_cast<QWidget*>(btnBrowse_)})
+                       static_cast<QWidget*>(btnBrowse_), static_cast<QWidget*>(btnCookiesPick_),
+                       static_cast<QWidget*>(btnCookiesClear_)})
         w->setEnabled(idle);
     urlEdit_->setReadOnly(busy_);
 
@@ -411,6 +431,14 @@ void MainWindow::chooseDir()
     const QString start = outDir_->text().isEmpty() ? QDir::homePath() : outDir_->text();
     const QString d = QFileDialog::getExistingDirectory(this, "選擇儲存位置", start);
     if (!d.isEmpty()) outDir_->setText(QDir::toNativeSeparators(d));
+}
+
+void MainWindow::chooseCookiesFile()
+{
+    const QString cur = cookiesFile_->text().trimmed();
+    const QString start = cur.isEmpty() ? QDir::homePath() : cur;
+    const QString f = QFileDialog::getOpenFileName(this, "選擇 cookies.txt", start, "cookies (*.txt);;所有檔案 (*)");
+    if (!f.isEmpty()) cookiesFile_->setText(QDir::toNativeSeparators(f));
 }
 
 void MainWindow::openDir()

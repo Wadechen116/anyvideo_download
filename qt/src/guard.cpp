@@ -68,6 +68,10 @@ QList<GuardIssue> checkDownloadSettings(const Settings& s, const DirProbe& probe
     else if (probe.free >= 0 && probe.free < kGuardMinFreeBytes)
         issues.append({QStringLiteral("disk_low"), QString::number(double(probe.free) / (1024.0 * 1024.0 * 1024.0), 'f', 1), false, {}});
 
+    // 只有「設了、但檔案不存在」才提醒；沒設就是沒要用
+    if (!s.cookiesFile.trimmed().isEmpty() && s.usableCookiesFile().isEmpty())
+        issues.append({QStringLiteral("cookies_missing"), s.cookiesFile, false, {{"cookies_file", ""}}});
+
     const bool video = s.mode == "video";
     const bool original = s.priority == "original";
     const QString& c = s.container;
@@ -95,6 +99,7 @@ Settings applyGuardFixes(const Settings& s, const QList<GuardIssue>& issues)
             if (kv.first == "container") out.container = kv.second;
             else if (kv.first == "audio_format") out.audioFormat = kv.second;
             else if (kv.first == "embed_thumb") out.embedThumb = kv.second == "true";
+            else if (kv.first == "cookies_file") out.cookiesFile = kv.second;
             else if (kv.first == "embed_subs") out.embedSubs = kv.second == "true";
         }
     return out;
@@ -109,6 +114,8 @@ QString describeGuardIssue(const GuardIssue& i)
         return QStringLiteral("無法寫入儲存位置 %1：資料夾是唯讀、被 Windows「受控資料夾存取」（防勒索軟體）擋住，或權限不足。請換一個位置（例如桌面）。").arg(d);
     if (i.id == "disk_low")
         return QStringLiteral("儲存位置所在的磁碟只剩 %1 GB 可用空間。高畫質影片可能好幾 GB，空間不夠時下載到一半會失敗。").arg(d);
+    if (i.id == "cookies_missing")
+        return QStringLiteral("設定的 cookies.txt 找不到：%1。檔案不存在時會被忽略（改用「登入狀態」的瀏覽器設定）。可以清除這個設定，或重新選擇檔案。").arg(d);
     if (i.id == "compat_not_kept")
         return QStringLiteral("「相容優先」承諾輸出 H.264 + AAC，但 %1 容器做不到（webm 裝不下 H.264，avi 一律轉成 MPEG-4 + MP3），結果不會是 H.264。要 H.264 請改用 mp4（畫質最高又能播）。").arg(d);
     if (i.id == "subs_dropped")

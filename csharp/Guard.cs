@@ -4,6 +4,7 @@
 // （例如改成 mkv：什麼都裝得下，只是重新封裝，不必重新編碼）。
 //   致命（不能照原設定做）：dir_admin_only 儲存位置在需要管理員權限的地方、dir_not_writable 儲存位置寫不進去
 //   提醒：disk_low 磁碟空間不到 2 GB、compat_not_kept 相容優先卻選了 webm／avi（做不到 H.264）、
+//         cookies_missing 指定的 cookies.txt 不存在（會被略過）、
 //         subs_dropped／thumb_dropped 勾了嵌入字幕／封面但容器不支援（會悄悄不嵌）
 // 規則與 py/anyvideo_download.py、qt/src/guard.cpp 相同（tests/guard_flow.py 三個版本跑同一批案例）。
 using System.Globalization;
@@ -87,6 +88,10 @@ public static class DownloadGuard
         else if (probe.Free >= 0 && probe.Free < MinFreeBytes)
             issues.Add(new("disk_low", (probe.Free / (1024.0 * 1024.0 * 1024.0)).ToString("F1", CultureInfo.InvariantCulture), false, None));
 
+        // cookies_file 設了但檔案不在：下載會退回瀏覽器設定，多半不是本意。只有「確定不存在」才提醒
+        if (s.CookiesFile.Trim() != "" && s.UsableCookiesFile() == "")
+            issues.Add(new("cookies_missing", s.CookiesFile, false, [("cookies_file", "")]));
+
         bool video = s.Mode == "video", original = s.Priority == "original";
         var c = s.Container;
         if (video && s.Priority == "compat" && (c == "webm" || c == "avi"))
@@ -115,6 +120,7 @@ public static class DownloadGuard
                     case "audio_format": o.AudioFormat = value; break;
                     case "embed_thumb": o.EmbedThumb = value == "true"; break;
                     case "embed_subs": o.EmbedSubs = value == "true"; break;
+                    case "cookies_file": o.CookiesFile = value; break;
                 }
         return o;
     }
@@ -132,6 +138,8 @@ public static class DownloadGuard
                 return $"儲存位置所在的磁碟只剩 {d} GB 可用空間。高畫質影片可能好幾 GB，空間不夠時下載到一半會失敗。";
             case "compat_not_kept":
                 return $"「相容優先」承諾輸出 H.264 + AAC，但 {d} 容器做不到（webm 裝不下 H.264，avi 一律轉成 MPEG-4 + MP3），結果不會是 H.264。要 H.264 請改用 mp4（畫質最高又能播）。";
+            case "cookies_missing":
+                return $"已指定 cookies.txt，但找不到這個檔案：{d}。下載時會略過它（改用「登入狀態」的設定）。要清除這個設定嗎？";
             case "subs_dropped":
                 return $"已勾選嵌入字幕，但 {d} 容器不支援，字幕不會被嵌入。改用 mkv 可以嵌入（也不必重新編碼）。";
             case "thumb_dropped":

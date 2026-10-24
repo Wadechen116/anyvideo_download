@@ -106,6 +106,7 @@ class Settings:
     embed_thumb: bool = False
     embed_subs: bool = False
     browser: str = "不使用"
+    cookies_file: str = ""                 # cookies.txt 的路徑；檔案存在時優先於 browser
 
     @classmethod
     def load(cls) -> "Settings":
@@ -130,6 +131,23 @@ class Settings:
 def find_ffmpeg() -> str | None:
     exe = shutil.which("ffmpeg")
     return str(Path(exe).parent) if exe else None
+
+
+def usable_cookies_file(s: Settings) -> str:
+    """設定的 cookies.txt 路徑；沒設或檔案不存在時回傳空字串（改用瀏覽器的設定）。"""
+    p = (s.cookies_file or "").strip()
+    return p if p and Path(p).is_file() else ""
+
+
+def apply_cookie_options(opts: dict, s: Settings) -> None:
+    """cookies.txt 優先（同時給瀏覽器會去讀被鎖住的資料庫而出錯），否則用瀏覽器 cookies。"""
+    cf = usable_cookies_file(s)
+    if cf:
+        opts["cookiefile"] = cf
+        return
+    browser = dict(BROWSERS).get(s.browser)
+    if browser:
+        opts["cookiesfrombrowser"] = (browser,)
 
 
 def build_ydl_options(s: Settings, ffmpeg_dir: str | None) -> dict:
@@ -162,9 +180,7 @@ def build_ydl_options(s: Settings, ffmpeg_dir: str | None) -> dict:
     if ffmpeg_dir:
         opts["ffmpeg_location"] = ffmpeg_dir
 
-    browser = dict(BROWSERS).get(s.browser)
-    if browser:
-        opts["cookiesfrombrowser"] = (browser,)
+    apply_cookie_options(opts, s)
 
     pps: list[dict] = []
 
@@ -541,6 +557,9 @@ def check_download_settings(s: "Settings", writable: bool | None = True, free: i
     elif free is not None and free < GUARD_MIN_FREE_BYTES:
         issues.append(GuardIssue("disk_low", f"{free / 1024 ** 3:.1f}"))
 
+    if (s.cookies_file or "").strip() and not usable_cookies_file(s):
+        issues.append(GuardIssue("cookies_missing", s.cookies_file.strip(), fix=(("cookies_file", ""),)))
+
     video, original, c = s.mode == "video", s.priority == "original", s.container
     if video and s.priority == "compat" and c in ("webm", "avi"):
         issues.append(GuardIssue("compat_not_kept", c, fix=(("container", "mp4"),)))
@@ -574,6 +593,8 @@ def describe_guard_issue(i: GuardIssue) -> str:
         return f"無法寫入儲存位置 {d}：資料夾是唯讀、被 Windows「受控資料夾存取」（防勒索軟體）擋住，或權限不足。請換一個位置（例如桌面）。"
     if i.id == "disk_low":
         return f"儲存位置所在的磁碟只剩 {d} GB 可用空間。高畫質影片可能好幾 GB，空間不夠時下載到一半會失敗。"
+    if i.id == "cookies_missing":
+        return f"指定的 cookies.txt 找不到：{d}。這次不會用到它（改用「登入狀態」選的瀏覽器）。可以清除這個設定，或重新選擇檔案。"
     if i.id == "compat_not_kept":
         return f"「相容優先」承諾輸出 H.264 + AAC，但 {d} 容器做不到（webm 裝不下 H.264，avi 一律轉成 MPEG-4 + MP3），結果不會是 H.264。要 H.264 請改用 mp4（畫質最高又能播）。"
     if i.id == "subs_dropped":
@@ -729,9 +750,13 @@ def capture_is_good_fallback(platform: str) -> bool:
     return platform in ("douyin", "xiaohongshu", "tiktok")
 
 
-def platform_hint(platform: str, kind: str, error_text: str, uses_cookies: bool) -> str | None:
+def platform_hint(platform: str, kind: str, error_text: str, uses_cookies: bool, cookies_from_file: bool = False) -> str | None:
     """這個平台下載失敗時，使用者該知道的事。kind 是 classify_error 的分類；沒有特別的話回傳 None。"""
     if platform == "douyin":
+        if cookies_from_file and ("fresh cookies" in error_text.lower() or kind == "login"):
+            return ("抖音要求「新的 cookies」：你指定的 cookies.txt 可能已過期，或不是從 douyin.com 匯出的。"
+                    "請先用瀏覽器開 douyin.com、隨便看一支影片讓網站發給瀏覽器 cookies，再重新匯出 cookies.txt。"
+                    "還是不行就用「從瀏覽器擷取」：瀏覽器能播，就能抓。")
         if "fresh cookies" in error_text.lower() or kind == "login":
             return ("抖音要求「新的 cookies」（不一定要登入）：先用 Firefox 或 Chrome 開 douyin.com、隨便看一支影片讓網站發給瀏覽器 cookies，"
                     "再到「登入狀態」選那個瀏覽器。"
@@ -880,8 +905,9 @@ class DownloadJob(threading.Thread):
                 kind = classify_error("\n".join(logger.errors) or reason)
                 plan = plan_retry(kind, tried)
                 if plan is None or self.cancel.is_set():
-                    uses_cookies = dict(BROWSERS).get(self.settings.browser) is not None
-                    hint = (platform_hint(platform_of(url), kind, "\n".join(logger.errors) or reason, uses_cookies)
+                    uses_cookies = bool(usable_cookies_file(self.settings)) or dict(BROWSERS).get(self.settings.browser) is not None
+                    hint = (platform_hint(platform_of(url), kind, "\n".join(logger.errors) or reason, uses_cookies,
+                                          bool(usable_cookies_file(self.settings)))
                             or error_hint(kind, self.settings))                # 這個平台特有的說明優先
                     if hint:
                         self.post("log", "建議：" + hint, "warn")
@@ -919,9 +945,7 @@ class ProbeJob(threading.Thread):
             "extract_flat": "in_playlist", "noplaylist": not self.settings.playlist,
             "logger": _YdlLogger(self.post),
         }
-        browser = dict(BROWSERS).get(self.settings.browser)
-        if browser:
-            opts["cookiesfrombrowser"] = (browser,)
+        apply_cookie_options(opts, self.settings)
         url, note = resolve_link(self.url)
         if note:
             self.post("log", note, "info")
@@ -1105,10 +1129,19 @@ class App(tk.Tk):
         ttk.Label(f_opt, text="需要登入才能看的內容，借用瀏覽器已登入的 cookies",
                   style="Hint.TLabel").grid(row=5, column=2, columnspan=4, sticky="w", pady=(8, 0))
 
+        self.var_cookies = tk.StringVar()
+        ttk.Label(f_opt, text="cookies.txt").grid(row=6, column=0, sticky="w", pady=(8, 0))
+        ck = ttk.Frame(f_opt)
+        ck.grid(row=6, column=1, columnspan=5, sticky="ew", pady=(8, 0))
+        ck.columnconfigure(0, weight=1)
+        ttk.Entry(ck, textvariable=self.var_cookies, state="readonly").grid(row=0, column=0, sticky="ew")
+        ttk.Button(ck, text="選擇…", command=self._choose_cookies).grid(row=0, column=1, padx=4)
+        ttk.Button(ck, text="清除", command=lambda: self.var_cookies.set("")).grid(row=0, column=2)
+
         self.var_outdir = tk.StringVar()
-        ttk.Label(f_opt, text="儲存位置").grid(row=6, column=0, sticky="w", pady=(8, 0))
+        ttk.Label(f_opt, text="儲存位置").grid(row=7, column=0, sticky="w", pady=(8, 0))
         out = ttk.Frame(f_opt)
-        out.grid(row=6, column=1, columnspan=5, sticky="ew", pady=(8, 0))
+        out.grid(row=7, column=1, columnspan=5, sticky="ew", pady=(8, 0))
         out.columnconfigure(0, weight=1)
         ttk.Entry(out, textvariable=self.var_outdir).grid(row=0, column=0, sticky="ew")
         ttk.Button(out, text="瀏覽…", command=self._choose_dir).grid(row=0, column=1, padx=4)
@@ -1189,6 +1222,7 @@ class App(tk.Tk):
         self.var_thumb.set(s.embed_thumb)
         self.var_subs.set(s.embed_subs)
         self.var_browser.set(s.browser if s.browser in dict(BROWSERS) else "不使用")
+        self.var_cookies.set(s.cookies_file)
         self.var_outdir.set(s.out_dir)
 
     def _collect_settings(self) -> Settings:
@@ -1205,6 +1239,7 @@ class App(tk.Tk):
             embed_thumb=self.var_thumb.get(),
             embed_subs=self.var_subs.get(),
             browser=self.var_browser.get(),
+            cookies_file=self.var_cookies.get().strip(),
         )
         self.settings = s
         return s
@@ -1282,6 +1317,13 @@ class App(tk.Tk):
         d = filedialog.askdirectory(initialdir=self.var_outdir.get() or str(Path.home()))
         if d:
             self.var_outdir.set(str(Path(d)))
+
+    def _choose_cookies(self) -> None:
+        cur = self.var_cookies.get()
+        f = filedialog.askopenfilename(title="選擇 cookies.txt", filetypes=[("cookies.txt", "*.txt"), ("所有檔案", "*.*")],
+                                       initialdir=str(Path(cur).parent) if cur and Path(cur).parent.is_dir() else str(Path.home()))
+        if f:
+            self.var_cookies.set(str(Path(f)))
 
     def _open_dir(self) -> None:
         d = Path(self.var_outdir.get())

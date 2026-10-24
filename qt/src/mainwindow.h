@@ -36,6 +36,7 @@ private:
     QStringList urls() const;
     void pasteUrls();
     void chooseDir();
+    void chooseCookiesFile();
     void openDir();
     void probe();
     void startDownload();
@@ -74,6 +75,9 @@ private:
     QCheckBox* chkThumb_ = nullptr;
     QCheckBox* chkSubs_ = nullptr;
     QComboBox* cbBrowser_ = nullptr;
+    QLineEdit* cookiesFile_ = nullptr;
+    QPushButton* btnCookiesPick_ = nullptr;
+    QPushButton* btnCookiesClear_ = nullptr;
     QLineEdit* outDir_ = nullptr;
     QPushButton* btnBrowse_ = nullptr;
     QPushButton* btnStart_ = nullptr;

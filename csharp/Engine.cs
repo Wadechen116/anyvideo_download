@@ -239,8 +239,7 @@ public static partial class Core
             "--socket-timeout", "30", "--retry-sleep", "http:exp=1:20", "--retry-sleep", "fragment:exp=1:20",
             "--concurrent-fragments", "4"]);
         if (!string.IsNullOrEmpty(ffmpegDir)) a.AddRange(["--ffmpeg-location", ffmpegDir]);
-        var browser = Options.ValueOf(Options.Browsers, s.Browser);
-        if (browser != "") a.AddRange(["--cookies-from-browser", browser]);
+        AddCookieArgs(a, s);
         if (!string.IsNullOrEmpty(pluginDir)) a.AddRange(["--plugin-dirs", pluginDir]);
         if (tweaks.Impersonate) a.AddRange(["--impersonate", "chrome"]);
         a.AddRange(["--progress-template", DownloadTemplate, "--progress-template", PostprocessTemplate]);
@@ -313,12 +312,20 @@ public static partial class Core
         return a;
     }
 
+    /// <summary>cookies.txt 可用就只加 --cookies（檔案優先，不再加 --cookies-from-browser）；否則照瀏覽器設定。</summary>
+    private static void AddCookieArgs(List<string> a, Settings s)
+    {
+        var file = s.UsableCookiesFile();
+        if (file != "") { a.AddRange(["--cookies", file]); return; }
+        var browser = Options.ValueOf(Options.Browsers, s.Browser);
+        if (browser != "") a.AddRange(["--cookies-from-browser", browser]);
+    }
+
     public static List<string> BuildProbeArgs(Settings s, string url)
     {
         var a = new List<string> { "--ignore-config", "--color", "never", "-J", "--flat-playlist" };
         a.Add(s.Playlist ? "--yes-playlist" : "--no-playlist");
-        var browser = Options.ValueOf(Options.Browsers, s.Browser);
-        if (browser != "") a.AddRange(["--cookies-from-browser", browser]);
+        AddCookieArgs(a, s);
         a.AddRange(["--", url]);
         return a;
     }
@@ -489,8 +496,9 @@ public sealed class DownloadJob(IReadOnlyList<string> urls, Settings settings, E
                     }
                     continue;
                 }
-                var usesCookies = Options.ValueOf(Options.Browsers, settings.Browser) != "";
-                var hint = Platforms.Hint(Platforms.Of(finalUrl), kind, errorText, usesCookies)      // 這個平台特有的說明優先
+                var cookiesFile = settings.UsableCookiesFile() != "";
+                var usesCookies = cookiesFile || Options.ValueOf(Options.Browsers, settings.Browser) != "";
+                var hint = Platforms.Hint(Platforms.Of(finalUrl), kind, errorText, usesCookies, cookiesFile)      // 這個平台特有的說明優先
                            ?? Core.ErrorHint(kind, settings);
                 if (hint is not null) RaiseLog("建議：" + hint, "warn");
                 if (Platforms.CaptureIsGoodFallback(Platforms.Of(finalUrl)) && !_captureUrls.Contains(url)) _captureUrls.Add(url);

@@ -85,6 +85,7 @@ public partial class MainWindow : Window
         ChkThumb.IsChecked = s.EmbedThumb;
         ChkSubs.IsChecked = s.EmbedSubs;
         CbBrowser.SelectedItem = Options.HasLabel(Options.Browsers, s.Browser) ? s.Browser : Options.Browsers[0].Label;
+        CookiesBox.Text = s.CookiesFile;
         OutDirBox.Text = s.OutDir;
     }
 
@@ -105,6 +106,7 @@ public partial class MainWindow : Window
             EmbedThumb = ChkThumb.IsChecked == true,
             EmbedSubs = ChkSubs.IsChecked == true,
             Browser = CbBrowser.SelectedItem as string ?? Options.Browsers[0].Label,
+            CookiesFile = CookiesBox.Text.Trim(),
         };
         return _settings;
     }
@@ -130,7 +132,7 @@ public partial class MainWindow : Window
         var target = video ? (original ? "" : container) : audioFormat;
         ChkThumb.IsEnabled = idle && Options.ThumbOk.Contains(target);       // 容器還不知道時（原始品質、原始音訊）不嵌封面
         ChkSubs.IsEnabled = idle && video && (original || Options.SubsOk.Contains(container));
-        foreach (UIElement el in new UIElement[] { RbVideo, RbAudio, ChkPlaylist, ChkMeta, CbBrowser, OutDirBox, BtnBrowse })
+        foreach (UIElement el in new UIElement[] { RbVideo, RbAudio, ChkPlaylist, ChkMeta, CbBrowser, CookiesBox, BtnCookiesPick, BtnCookiesClear, OutDirBox, BtnBrowse })
             el.IsEnabled = idle;
         UrlBox.IsReadOnly = _busy;
 
@@ -211,6 +213,24 @@ public partial class MainWindow : Window
         if (Directory.Exists(OutDirBox.Text)) dlg.InitialDirectory = OutDirBox.Text;
         if (dlg.ShowDialog(this) == true) OutDirBox.Text = dlg.FolderName;
     }
+
+    private void ChooseCookies_Click(object sender, RoutedEventArgs e)
+    {
+        var dlg = new Microsoft.Win32.OpenFileDialog
+        {
+            Title = "選擇 cookies.txt",
+            Filter = "cookies (*.txt)|*.txt|所有檔案 (*.*)|*.*",
+        };
+        try
+        {
+            var cur = CookiesBox.Text.Trim();
+            if (cur != "" && Directory.Exists(Path.GetDirectoryName(cur))) dlg.InitialDirectory = Path.GetDirectoryName(cur);
+        }
+        catch (ArgumentException) { }
+        if (dlg.ShowDialog(this) == true) CookiesBox.Text = dlg.FileName;
+    }
+
+    private void ClearCookies_Click(object sender, RoutedEventArgs e) => CookiesBox.Text = "";
 
     private void OpenDir_Click(object sender, RoutedEventArgs e)
     {

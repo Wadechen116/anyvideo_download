@@ -153,8 +153,10 @@ QStringList buildDownloadArgs(const Settings& s, const QString& ffmpegDir, const
       << "--retry-sleep" << "http:exp=1:20" << "--retry-sleep" << "fragment:exp=1:20"
       << "--concurrent-fragments" << "4";
     if (!ffmpegDir.isEmpty()) a << "--ffmpeg-location" << ffmpegDir;
+    const QString cookiesFile = s.usableCookiesFile();
     const QString browser = valueOf(kBrowsers, s.browser);
-    if (!browser.isEmpty()) a << "--cookies-from-browser" << browser;
+    if (!cookiesFile.isEmpty()) a << "--cookies" << cookiesFile;          // 檔案優先，不再加 --cookies-from-browser
+    else if (!browser.isEmpty()) a << "--cookies-from-browser" << browser;
     if (!plugins.isEmpty()) a << "--plugin-dirs" << plugins;
     if (tweaks.impersonate) a << "--impersonate" << "chrome";
     a << "--progress-template" << kDownloadTemplate << "--progress-template" << kPostprocessTemplate;
@@ -224,8 +226,10 @@ QStringList buildProbeArgs(const Settings& s, const QString& url)
 {
     QStringList a{"--ignore-config", "--color", "never", "-J", "--flat-playlist"};
     a << (s.playlist ? "--yes-playlist" : "--no-playlist");
+    const QString cookiesFile = s.usableCookiesFile();
     const QString browser = valueOf(kBrowsers, s.browser);
-    if (!browser.isEmpty()) a << "--cookies-from-browser" << browser;
+    if (!cookiesFile.isEmpty()) a << "--cookies" << cookiesFile;          // 檔案優先，不再加 --cookies-from-browser
+    else if (!browser.isEmpty()) a << "--cookies-from-browser" << browser;
     a << "--" << url;
     return a;
 }
@@ -276,6 +280,8 @@ QString errorHint(const QString& kind, const Settings& s)
     if (kind == "disk") return QStringLiteral("寫入失敗：請確認儲存位置還有空間、有寫入權限，且路徑不要太深。");
     if (kind == "bot")
         return QStringLiteral("網站要求證明不是機器人。「登入狀態」選一個已登入該網站的瀏覽器（Firefox 最可靠）再試。");
+    if (kind == "login" && !s.usableCookiesFile().isEmpty())
+        return QStringLiteral("已使用 cookies.txt 仍要求登入：檔案可能已過期，或不是從這個網站匯出的。請在瀏覽器登入該網站後重新匯出 cookies.txt 再試。");
     if (kind == "login")
         return s.browser == QStringLiteral("不使用")
                    ? QStringLiteral("這個內容需要登入。「登入狀態」選一個已登入該網站的瀏覽器（Firefox 最可靠）再試。")
@@ -479,8 +485,9 @@ void DownloadJob::onFinished(int exitCode, QProcess::ExitStatus st)
         return;
     }
     const Platform platform = platformOf(QUrl(url));
-    const bool cookies = settings_.browser != QStringLiteral("不使用") && !settings_.browser.isEmpty();
-    QString hint = platformHint(platform, kind, errors_.join('\n'), cookies);     // 這個平台特有的說明優先
+    const bool cookiesFile = !settings_.usableCookiesFile().isEmpty();
+    const bool cookies = cookiesFile || (settings_.browser != QStringLiteral("不使用") && !settings_.browser.isEmpty());
+    QString hint = platformHint(platform, kind, errors_.join('\n'), cookies, cookiesFile);     // 這個平台特有的說明優先
     if (hint.isEmpty()) hint = errorHint(kind, settings_);
     if (!hint.isEmpty()) emit log(QStringLiteral("建議：") + hint, "warn");
     if (captureIsGoodFallback(platform) && !captureUrls_.contains(url)) captureUrls_ << url;

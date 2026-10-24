@@ -83,7 +83,14 @@ Settings Settings::loadFrom(const QString& path)
     flag("embed_thumb", s.embedThumb);
     flag("embed_subs", s.embedSubs);
     str("browser", s.browser);
+    str("cookies_file", s.cookiesFile);
     return s;
+}
+
+QString Settings::usableCookiesFile() const
+{
+    const QString p = cookiesFile.trimmed();
+    return (!p.isEmpty() && QFileInfo(p).isFile()) ? p : QString();
 }
 
 void Settings::save() const
@@ -98,6 +105,7 @@ void Settings::save() const
         {"audio_bitrate", audioBitrate}, {"playlist", playlist},
         {"embed_meta", embedMeta},   {"embed_thumb", embedThumb},
         {"embed_subs", embedSubs},   {"browser", browser},
+        {"cookies_file", cookiesFile},
     };
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) return;  // 存不了設定不該讓下載失敗

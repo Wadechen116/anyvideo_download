@@ -39,7 +39,7 @@ QString absoluteLocation(const QUrl& base, const QString& location);
 QString douyinVideoId(const QUrl& url);
 
 // 這個平台下載失敗時，使用者該知道的事。kind 是錯誤分類（見 engine.h 的 classifyError）；沒有特別的話回傳空字串。
-QString platformHint(Platform p, const QString& kind, const QString& errorText, bool usesBrowserCookies);
+QString platformHint(Platform p, const QString& kind, const QString& errorText, bool usesBrowserCookies, bool usesCookiesFile = false);
 
 // 這個平台的下載失敗後，改用「從瀏覽器擷取」常常有效（yt-dlp 的解析器常因網站改版而壞）。
 bool captureIsGoodFallback(Platform p);

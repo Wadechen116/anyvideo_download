@@ -78,11 +78,15 @@ struct Settings {
     bool embedThumb = false;
     bool embedSubs = false;
     QString browser = QStringLiteral("不使用");
+    QString cookiesFile;         // cookies.txt 路徑；空字串 = 不使用。檔案存在時優先於 browser
 
     Settings();
     static Settings load();                       // 讀預設位置
     static Settings loadFrom(const QString& path);  // 讀不到就回傳預設值
     void save() const;
+
+    // 設了 cookiesFile 而且檔案真的存在才回傳路徑，否則回傳空字串（忽略它、回到瀏覽器設定）
+    QString usableCookiesFile() const;
 };
 
 }  // namespace avd

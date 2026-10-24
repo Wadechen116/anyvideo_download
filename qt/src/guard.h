@@ -4,6 +4,7 @@
 // （例如改成 mkv：什麼都裝得下，只是重新封裝，不必重新編碼）。
 //   致命（不能照原設定做）：dir_admin_only 儲存位置在需要管理員權限的地方、dir_not_writable 儲存位置寫不進去
 //   提醒：disk_low 磁碟空間不到 2 GB、compat_not_kept 相容優先卻選了 webm／avi（做不到 H.264）、
+//         cookies_missing 設了 cookies.txt 但檔案不存在（會被忽略；修法＝清除）、
 //         subs_dropped／thumb_dropped 勾了嵌入字幕／封面但容器不支援（會悄悄不嵌）
 // 規則與 py/anyvideo_download.py、csharp/Guard.cs 相同（tests/guard_flow.py 三個版本跑同一批案例）。
 #pragma once

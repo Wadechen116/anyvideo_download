@@ -86,6 +86,7 @@ def compare_with_python(s: av.Settings, cli_args: list[str]) -> list[str]:
     same("ffmpeg_location", py.get("ffmpeg_location"), cli.get("ffmpeg_location"))
     same("cookiesfrombrowser", (py.get("cookiesfrombrowser") or (None,))[0],
          (cli.get("cookiesfrombrowser") or (None,))[0])
+    same("cookiefile", py.get("cookiefile"), cli.get("cookiefile"))
     same("writesubtitles", bool(py.get("writesubtitles")), bool(cli.get("writesubtitles")))
     if py.get("writesubtitles"):
         same("subtitleslangs", py.get("subtitleslangs"), cli.get("subtitleslangs"))
@@ -100,6 +101,12 @@ def compare_with_python(s: av.Settings, cli_args: list[str]) -> list[str]:
             if c.get(k) != v:
                 diffs.append(f"{p['key']}.{k}: Python={v!r} 命令列={c.get(k)!r}")
     return diffs
+
+
+# cookies_file 的測試檔：一個真的存在、一個不存在（不存在時兩邊都不該帶 cookiefile）
+COOKIES_OK = Path(tempfile.mkdtemp(prefix="avd_cookies_")) / "cookies.txt"
+COOKIES_OK.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+COOKIES_MISSING = str(COOKIES_OK.parent / "no_such_cookies.txt")
 
 
 def settings_matrix() -> list[av.Settings]:
@@ -120,6 +127,11 @@ def settings_matrix() -> list[av.Settings]:
     # 其他選項各來一組
     out.append(av.Settings(out_dir="C:/Temp/slash/", playlist=True, browser="Firefox", embed_meta=False))
     out.append(av.Settings(out_dir=r"D:\影片\下載", mode="audio", playlist=True, browser="Chrome"))
+    # cookies.txt：存在時用 cookiefile 且不帶瀏覽器；不存在時忽略、回到瀏覽器設定
+    out.append(av.Settings(out_dir=r"C:\Temp\avd out", cookies_file=str(COOKIES_OK)))
+    out.append(av.Settings(out_dir=r"C:\Temp\avd out", cookies_file=str(COOKIES_OK), browser="Firefox"))
+    out.append(av.Settings(out_dir=r"C:\Temp\avd out", cookies_file=COOKIES_MISSING, browser="Chrome"))
+    out.append(av.Settings(out_dir=r"C:\Temp\avd out", cookies_file=COOKIES_MISSING))
     return out
 
 
@@ -209,6 +221,7 @@ def main() -> int:
             failed += test_downloads(names, work)
     finally:
         shutil.rmtree(work, ignore_errors=True)
+        shutil.rmtree(COOKIES_OK.parent, ignore_errors=True)
     print("\n全部通過" if not failed else f"\n失敗 {failed} 項")
     return 1 if failed else 0
 

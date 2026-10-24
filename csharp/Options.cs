@@ -98,6 +98,15 @@ public sealed class Settings
     public bool EmbedThumb { get; set; }
     public bool EmbedSubs { get; set; }
     public string Browser { get; set; } = "不使用";
+    public string CookiesFile { get; set; } = "";      // cookies.txt 路徑；存在時優先於 Browser
+
+    /// <summary>可用的 cookies.txt 路徑（設了而且檔案存在）；否則 ""（檔案不見就當沒設，退回瀏覽器設定）。</summary>
+    public string UsableCookiesFile()
+    {
+        var p = (CookiesFile ?? "").Trim();
+        try { return p != "" && File.Exists(p) ? p : ""; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException) { return ""; }
+    }
 
     public static string SettingsPath
     {
@@ -143,6 +152,7 @@ public sealed class Settings
         s.EmbedThumb = Flag("embed_thumb", s.EmbedThumb);
         s.EmbedSubs = Flag("embed_subs", s.EmbedSubs);
         s.Browser = Str("browser", s.Browser);
+        s.CookiesFile = Str("cookies_file", s.CookiesFile);
         return s;
     }
 
@@ -154,7 +164,7 @@ public sealed class Settings
             ["out_dir"] = OutDir, ["mode"] = Mode, ["container"] = Container, ["quality"] = Quality,
             ["priority"] = Priority, ["audio_format"] = AudioFormat, ["audio_bitrate"] = AudioBitrate,
             ["playlist"] = Playlist, ["embed_meta"] = EmbedMeta, ["embed_thumb"] = EmbedThumb,
-            ["embed_subs"] = EmbedSubs, ["browser"] = Browser,
+            ["embed_subs"] = EmbedSubs, ["browser"] = Browser, ["cookies_file"] = CookiesFile,
         };
         try
         {

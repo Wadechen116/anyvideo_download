@@ -162,15 +162,20 @@ public static partial class Platforms
     public static bool CaptureIsGoodFallback(PlatformKind p) => p is PlatformKind.Douyin or PlatformKind.XiaoHongShu or PlatformKind.TikTok;
 
     /// <summary>這個平台下載失敗時，使用者該知道的事。kind 是 Core.ClassifyError 的分類；沒有特別的話回傳 null。</summary>
-    public static string? Hint(PlatformKind p, string kind, string errorText, bool usesCookies)
+    public static string? Hint(PlatformKind p, string kind, string errorText, bool usesCookies, bool cookiesFile = false)
     {
         switch (p)
         {
             case PlatformKind.Douyin:
                 if (errorText.Contains("fresh cookies", StringComparison.OrdinalIgnoreCase) || kind == "login")
+                {
+                    if (cookiesFile)
+                        return "抖音要求「新的 cookies」，但你指定的 cookies.txt 可能已過期，或不是從 douyin.com 匯出的：請先用瀏覽器開 douyin.com、隨便看一支影片，再重新匯出 cookies.txt 並重新選取。"
+                               + "還是不行就用「從瀏覽器擷取」：瀏覽器能播，就能抓。";
                     return "抖音要求「新的 cookies」（不一定要登入）：先用 Firefox 或 Chrome 開 douyin.com、隨便看一支影片讓網站發給瀏覽器 cookies，再到「登入狀態」選那個瀏覽器。"
                            + (usesCookies ? "已經選了瀏覽器仍失敗：請先關閉瀏覽器再試（Chrome／Edge 開著時讀不到 cookies），或改用 Firefox。" : "")
                            + "還是不行就用「從瀏覽器擷取」：瀏覽器能播，就能抓。";
+                }
                 if (kind == "update" || errorText.Contains("Unsupported URL"))
                     return "這個抖音網址形式 yt-dlp 不支援（例如圖文 /note/）或網站改版了。可以改用「從瀏覽器擷取」。";
                 break;

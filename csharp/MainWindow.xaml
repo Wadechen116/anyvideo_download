@@ -87,6 +87,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
 
                 <StackPanel Grid.Row="0" Grid.ColumnSpan="5" Orientation="Horizontal">
@@ -126,8 +127,17 @@
                 <TextBlock Grid.Row="5" Grid.Column="2" Grid.ColumnSpan="3" Style="{StaticResource Hint}"
                            Text="需要登入才能看的內容，借用瀏覽器已登入的 cookies" />
 
-                <TextBlock Grid.Row="6" Grid.Column="0" Text="儲存位置" Style="{StaticResource FieldLabel}" />
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="cookies.txt" Style="{StaticResource FieldLabel}" />
                 <DockPanel Grid.Row="6" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,4,0,0">
+                    <Button x:Name="BtnCookiesClear" DockPanel.Dock="Right" Content="清除" Margin="0" Click="ClearCookies_Click" />
+                    <Button x:Name="BtnCookiesPick" DockPanel.Dock="Right" Content="選擇…" Margin="6,0" Click="ChooseCookies_Click" />
+                    <TextBox x:Name="CookiesBox" IsReadOnly="True" VerticalContentAlignment="Center"
+                             AutomationProperties.Name="cookies.txt"
+                             ToolTip="匯出的 cookies.txt（Netscape 格式）；指定後優先使用，不再讀瀏覽器" />
+                </DockPanel>
+
+                <TextBlock Grid.Row="7" Grid.Column="0" Text="儲存位置" Style="{StaticResource FieldLabel}" />
+                <DockPanel Grid.Row="7" Grid.Column="1" Grid.ColumnSpan="4" Margin="0,4,0,0">
                     <Button DockPanel.Dock="Right" Content="開啟資料夾" Margin="0" Click="OpenDir_Click" />
                     <Button x:Name="BtnBrowse" DockPanel.Dock="Right" Content="瀏覽…" Margin="6,0" Click="ChooseDir_Click" />
                     <TextBox x:Name="OutDirBox" VerticalContentAlignment="Center" AutomationProperties.Name="儲存位置" />

@@ -130,9 +130,13 @@ QString absoluteLocation(const QUrl& base, const QString& location)
 
 bool captureIsGoodFallback(Platform p) { return p == Platform::Douyin || p == Platform::XiaoHongShu || p == Platform::TikTok; }
 
-QString platformHint(Platform p, const QString& kind, const QString& errorText, bool usesBrowserCookies)
+QString platformHint(Platform p, const QString& kind, const QString& errorText, bool usesBrowserCookies, bool usesCookiesFile)
 {
     if (p == Platform::Douyin) {
+        if (usesCookiesFile && (errorText.contains(QLatin1String("Fresh cookies"), Qt::CaseInsensitive) || kind == QLatin1String("login")))
+            return QStringLiteral("抖音要求「新的 cookies」：你選的 cookies.txt 可能已過期，或不是從 douyin.com 匯出的。"
+                                  "請先用瀏覽器開 douyin.com、隨便看一支影片，再重新匯出 cookies.txt。") +
+                   QStringLiteral("還是不行就用「從瀏覽器擷取」：瀏覽器能播，就能抓。");
         if (errorText.contains(QLatin1String("Fresh cookies"), Qt::CaseInsensitive) || kind == QLatin1String("login"))
             return QStringLiteral("抖音要求「新的 cookies」（不一定要登入）：先用 Firefox 或 Chrome 開 douyin.com、隨便看一支影片讓網站發給瀏覽器 cookies，"
                                   "再到「登入狀態」選那個瀏覽器。") +

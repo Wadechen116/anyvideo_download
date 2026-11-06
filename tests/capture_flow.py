@@ -10,6 +10,12 @@
   影像取 hi.mp4（正在播放的那支裡最高畫質的），聲音取 au.mp4，兩個「下一支」的檔案（解析度與位元率都更高）要被長度篩掉；
   輸出是一個 mp4，影像 1280×2276、有 AAC 聲音、長度約 4 秒。
 
+第三個情境（抖音頁面的真實結構）：目前這篇在 data-e2e="feed-active-video" 容器裡（3 張圖 + 音樂本身是個 <video>），容器外有「別篇預載」的圖片
+（黃色）與正在播放的影片（tv.mp4）。期望只用容器內的 3 張圖（紅、綠、藍，依頁面順序）與容器內的音樂，不能混進別篇的圖或影片。
+
+第二個情境（抖音圖文貼文）：網頁沒有 <video>，只用 fetch() 抓三張圖（網址帶 aweme-images，同一張圖再以另一個尺寸抓一次）與一首 6 秒的音樂。
+期望的結果：三張圖依序平均分配到音樂長度，合成 mp4（H.264 + AAC、畫布 = 圖片實際尺寸 720×1280、約 6 秒）。
+
 用暫存的瀏覽器設定檔（環境變數 AVD_CAPTURE_PROFILE），不碰你平常的擷取設定檔。會短暫開出 Chrome／Edge 視窗。
 
 執行（Windows，先建置 qt 與 csharp）：
@@ -63,6 +69,28 @@ def make_site(root: Path) -> None:
         "setTimeout(()=>fetch('/'+f).then(r=>r.arrayBuffer()),400*(i+1)));</script>", encoding="utf-8")
 
 
+def make_slides_site(root: Path) -> None:
+    for i, col in enumerate(("red", "green", "blue")):
+        ffmpeg("-f", "lavfi", "-i", f"color=c={col}:s=720x1280", "-frames:v", "1", str(root / f"s{i}~tplv-dy-aweme-images.png"))
+    ffmpeg("-f", "lavfi", "-i", "color=c=white:s=360x640", "-frames:v", "1", str(root / "s0~tplv-dy-aweme-images-small.png"))   # 同一張圖的另一個尺寸
+    ffmpeg("-f", "lavfi", "-i", "color=c=black:s=100x100", "-frames:v", "1", str(root / "avatar.png"))                      # 不是圖文的圖片：不能被當成投影片
+    ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=6", "-b:a", "128k", str(root / "music.mp3"))
+    (root / "slides.html").write_text(
+        "<!doctype html><meta charset=utf-8><title>slides test</title>"
+        "<script>['avatar.png','s0~tplv-dy-aweme-images.png','s0~tplv-dy-aweme-images-small.png','s1~tplv-dy-aweme-images.png',"
+        "'s2~tplv-dy-aweme-images.png','music.mp3'].forEach((f,i)=>"
+        "setTimeout(()=>fetch('/'+f).then(r=>r.arrayBuffer()),300*(i+1)));</script>", encoding="utf-8")
+
+
+def make_post_site(root: Path) -> None:
+    ffmpeg("-f", "lavfi", "-i", "color=c=yellow:s=720x1280", "-frames:v", "1", str(root / "d0~tplv-dy-aweme-images.png"))
+    imgs = "".join(f"<img src='/s{i}~tplv-dy-aweme-images.png'><img src='/s{i}~tplv-dy-aweme-images.png'>" for i in (2, 0, 1))   # 頁面順序：藍、紅、綠；每張出現兩次（背景模糊版）
+    (root / "post.html").write_text(
+        "<!doctype html><meta charset=utf-8><title>post test</title>"
+        "<video src='/tv.mp4' muted autoplay loop playsinline width=200></video><img src='/d0~tplv-dy-aweme-images.png'>"
+        f"<div data-e2e='feed-active-video'><video src='/music.mp3' muted autoplay loop></video>{imgs}</div>", encoding="utf-8")
+
+
 def probe(path: Path) -> dict:
     r = subprocess.run(["ffprobe", "-v", "error", "-print_format", "json", "-show_streams", "-show_format", str(path)],
                        capture_output=True, text=True, encoding="utf-8", errors="replace")
@@ -109,33 +137,59 @@ def main() -> int:
         site = work / "site"
         site.mkdir()
         make_site(site)
+        make_slides_site(site)
+        make_post_site(site)
         srv, base = st.serve(site)
         srv.handle_error = lambda *a: None          # Chrome 播放時會主動中斷連線（ConnectionResetError），不是錯誤
-        for target in wanted:
-            profile = work / f"profile_{target}"
-            out_dir = work / f"out_{target}"
+        for scenario in ("video", "slides", "post"):
+          for target in wanted:
+            name = f"{target}_{scenario}"
+            profile = work / f"profile_{name}"
+            out_dir = work / f"out_{name}"
+            page = {"video": "index.html", "slides": "slides.html", "post": "post.html"}[scenario]
             try:
-                ok, out, log = capture(target, base + "/index.html", out_dir, profile)
+                ok, out, log = capture(target, f"{base}/{page}", out_dir, profile)
             finally:
                 kill_test_browser(profile)
             if not ok or out is None or not out.exists():
                 failed += 1
-                print(f"FAIL  [{target}] 沒有產出檔案\n" + "\n".join("        " + l for l in log.splitlines()[-12:]))
+                print(f"FAIL  [{name}] 沒有產出檔案\n" + "\n".join("        " + l for l in log.splitlines()[-12:]))
                 continue
             info = probe(out)
             v = next((s for s in info["streams"] if s["codec_type"] == "video"), {})
             a = next((s for s in info["streams"] if s["codec_type"] == "audio"), {})
             dur = float(info["format"].get("duration", 0))
-            checks = {
-                "影像是 hi.mp4（1280×2276）": (v.get("width"), v.get("height")) == (1280, 2276),
-                "有聲音（AAC）": a.get("codec_name") == "aac",
-                "長度約 4 秒（不是預載的 6 秒）": 3.5 <= dur <= 4.6,
-                "聲音是 au.mp4（128k，不是 256k 的）": 60_000 <= int(a.get("bit_rate", 0) or 0) <= 200_000,
-                "只有一個輸出檔": len([p for p in out_dir.iterdir() if p.suffix == ".mp4"]) == 1,
-            }
+            if scenario == "video":
+                checks = {
+                    "影像是 hi.mp4（1280×2276）": (v.get("width"), v.get("height")) == (1280, 2276),
+                    "有聲音（AAC）": a.get("codec_name") == "aac",
+                    "長度約 4 秒（不是預載的 6 秒）": 3.5 <= dur <= 4.6,
+                    "聲音是 au.mp4（128k，不是 256k 的）": 60_000 <= int(a.get("bit_rate", 0) or 0) <= 200_000,
+                    "只有一個輸出檔": len([p for p in out_dir.iterdir() if p.suffix == ".mp4"]) == 1,
+                }
+            elif scenario == "post":
+                def color_at(t: float) -> str:
+                    r = subprocess.run(["ffmpeg", "-v", "error", "-ss", str(t), "-i", str(out), "-frames:v", "1", "-vf", "scale=1:1",
+                                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True)
+                    R, G, B = r.stdout[:3] if len(r.stdout) >= 3 else (0, 0, 0)
+                    return "R" if R > 150 > max(G, B) else "G" if G > 100 > R and G > B else "B" if B > 150 > R else "Y" if R > 150 and G > 150 else "?"
+                order = "".join(color_at(t) for t in (1.0, 3.0, 5.0))
+                checks = {
+                    "影像是 H.264、跟圖片一樣大（720×1280，不被放大或縮小）": (v.get("codec_name"), v.get("width"), v.get("height")) == ("h264", 720, 1280),
+                    "有聲音（AAC）": a.get("codec_name") == "aac",
+                    "長度約 6 秒（容器內音樂，不是 tv.mp4 的 4 秒）": 5.5 <= dur <= 6.6,
+                    f"圖片依頁面順序（藍、紅、綠）且沒有別篇的黃圖：{order}": order == "BRG",
+                }
+            else:
+                checks = {
+                    "影像是 H.264、跟圖片一樣大（720×1280，不被放大或縮小）": (v.get("codec_name"), v.get("width"), v.get("height")) == ("h264", 720, 1280),
+                    "有聲音（AAC）": a.get("codec_name") == "aac",
+                    "長度約 6 秒（音樂長度）": 5.5 <= dur <= 6.6,
+                    "只有一個輸出檔，沒有留下音樂或圖片": [p.suffix for p in out_dir.iterdir() if p.suffix in (".mp4", ".mp3", ".img") or (p.suffix == ".png" and p.name != "dialog.png")] == [".mp4"],
+                }
             bad = [k for k, ok in checks.items() if not ok]
             failed += bool(bad)
-            print(f"{'PASS' if not bad else 'FAIL'}  [{target}] {out.name}  影像 {v.get('width')}×{v.get('height')}  聲音 {a.get('codec_name')} {a.get('bit_rate')}  {dur:.2f} 秒")
+            print(f"{'PASS' if not bad else 'FAIL'}  [{name}] {out.name}  影像 {v.get('width')}×{v.get('height')}  聲音 {a.get('codec_name')} {a.get('bit_rate')}  {dur:.2f} 秒")
             for k in bad:
                 print("        不符：" + k)
             if bad:

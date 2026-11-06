@@ -11,6 +11,8 @@
   4. 影像取解析度最大的（同解析度取位元率最高），聲音取位元率最高的，合併成 mp4。
 限制：只能挑「播放器實際請求過的」畫質。播放器的自動畫質切換一開始常常先請求低畫質；要更高畫質，先在網站播放器裡把畫質調高再擷取。
 
+抖音圖文貼文（一組照片加背景音樂，沒有影片）：播放器請求的圖片（網址帶 aweme-images）記成 "slide"，和音樂一起合成 mp4（見 slideshow_parts／make_slideshow）。
+
 規則與 qt/src/capture.cpp、csharp/Capture.cs 相同（tests/capture_flow.py 三個版本跑同一個離線端對端測試）。
 """
 from __future__ import annotations
@@ -19,6 +21,7 @@ import base64
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -26,7 +29,7 @@ import time
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -69,6 +72,8 @@ def candidate_kind(url: str, mime: str) -> str:
     # 切片檔單獨拿沒有用：.ts／.m4s 是串流的一小段，要靠 m3u8／mpd 才能組回來
     if path.endswith(".ts") or path.endswith(".m4s") or "mp2t" in m:
         return ""
+    if m.startswith("image/") and "aweme-images" in url:      # 抖音圖文貼文的圖片（封面、頭像不帶這個字）
+        return "slide"
     if m.startswith("audio/"):
         return "audio"
     if m.startswith("video/"):
@@ -81,6 +86,8 @@ def candidate_kind(url: str, mime: str) -> str:
 def clean_media_url(url: str) -> str:
     """Meta 把同一個檔拆成很多 bytestart／byteend 範圍請求；拿掉才是完整檔案。"""
     sp = urllib.parse.urlsplit(url)
+    if "bytestart" not in sp.query and "byteend" not in sp.query:
+        return url                                      # 不需要改就原樣：重新編碼查詢字串會弄壞簽章（抖音圖片網址因此 403）
     q = [(k, v) for k, v in urllib.parse.parse_qsl(sp.query, keep_blank_values=True) if k not in ("bytestart", "byteend")]
     return urllib.parse.urlunsplit(sp._replace(query=urllib.parse.urlencode(q, safe="%:/=+,;@*!$'()~-._")))
 
@@ -95,6 +102,28 @@ def url_duration(url: str) -> float:
         return float(data["duration_s"]) if "duration_s" in data else -1
     except (ValueError, KeyError, TypeError):
         return -1
+
+
+def douyin_video_id(url: str) -> str:
+    """抖音網址裡的影片 id（douyin.com/video/ID、?modal_id=ID、iesdouyin.com/share/video/ID）；沒有回傳空字串。
+    （和 anyvideo_download.douyin_video_id 相同；這裡獨立一份，避免擷取模組載入整個主程式。）"""
+    sp = urllib.parse.urlsplit(url.strip())
+    host = (sp.hostname or "").lower()
+    if not any(host == d or host.endswith("." + d) for d in ("douyin.com", "iesdouyin.com")):
+        return ""
+    if m := re.search(r"/(?:video|share/video|note|share/note)/(\d+)", sp.path):
+        return m.group(1)
+    modal = urllib.parse.parse_qs(sp.query).get("modal_id", [""])[0]
+    return modal if modal.isdigit() else ""
+
+
+# 「這一篇」的容器：有指定抖音影片 ID 時是帶 data-e2e-vid=ID 的容器（不管它是不是正在播放：帳號開著自動連播時，短影片播完
+# 頁面就換下一支，網址的 modal_id 與 feed-active-video 都會跟著變，但原本那支的容器仍留在頁面上）；沒指定時是 data-e2e=feed-active-video。
+def _root_js(target_id: str) -> str:
+    t = target_id if target_id.isdigit() else ""
+    return ("const T='" + t + "';const els=T?[...document.querySelectorAll('[data-e2e-vid=\"'+T+'\"]')]:[];"
+            "const r=T?(els.find(e=>e.querySelector('video'))||els.find(e=>e.querySelector('img'))||null)"
+            ":document.querySelector('[data-e2e=\"feed-active-video\"]');")
 
 
 def _header(headers: dict, name: str) -> str:
@@ -121,12 +150,16 @@ class CaptureSession:
         self._send_lock = threading.Lock()
         self._next_id = 1
         self._start_url = ""
+        self.start_target_id = ""                    # 開啟網址裡的抖音影片 ID（自動擷取只認這支）；沒有是空字串
         self._navigated = False
         self._sessions: dict[str, str] = {}          # sessionId -> 目標類型（page、iframe、worker…）
         self._get_targets_id = 0
         self._pending_eval: set[int] = set()
         self._videos: list[list[float]] = []
         self._eval_done = threading.Event()
+        self._pending_post: set[int] = set()
+        self._post_values: list[dict] = []
+        self._post_done = threading.Event()
         self.port = 0
 
     def start(self, start_url: str = "") -> None:
@@ -138,6 +171,7 @@ class CaptureSession:
             s.bind(("127.0.0.1", 0))
             self.port = s.getsockname()[1]
         self._start_url = start_url
+        self.start_target_id = douyin_video_id(start_url)
         # 獨立的設定檔：不影響你平常用的瀏覽器（Chrome 也規定偵錯模式必須用獨立設定檔）。
         # 要看登入限定的內容，在這個視窗登入一次，下次還在。
         args = [browser, f"--remote-debugging-port={self.port}", f"--user-data-dir={self.profile}",
@@ -222,6 +256,17 @@ class CaptureSession:
                 if t.get("type") == "page":
                     self._send("Target.attachToTarget", {"targetId": t["targetId"], "flatten": True})
             return
+        if rid is not None and rid in self._pending_post:                       # query_active_post 的結果
+            self._pending_post.discard(rid)
+            try:
+                post = json.loads(m.get("result", {}).get("result", {}).get("value", "") or "{}")
+                if isinstance(post, dict) and post.get("slides"):
+                    self._post_values.append(post)
+            except (ValueError, TypeError):
+                pass
+            if not self._pending_post:
+                self._post_done.set()
+            return
         if rid is not None and rid in self._pending_eval:                       # Runtime.evaluate 的結果
             self._pending_eval.discard(rid)
             value = m.get("result", {}).get("result", {}).get("value", "")
@@ -266,10 +311,13 @@ class CaptureSession:
                 old.referer = old.referer or c.referer
                 self.on_found(old)
 
-    def query_videos(self, timeout: float = 3.0) -> list[list[float]]:
-        """頁面裡所有 <video>：[長度, 暫停(1/0), 目前時間, 寬, 高]；讀不到回傳空清單。"""
-        expression = ("JSON.stringify([...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.duration)?v.duration:-1,"
-                      "v.paused?1:0,v.currentTime,v.videoWidth,v.videoHeight]))")
+    def query_videos(self, timeout: float = 3.0, target_id: str = "") -> list[list[float]]:
+        """頁面裡所有 <video>：[長度, 暫停(1/0), 目前時間, 寬, 高, 容器]；讀不到回傳空清單。target_id：抖音影片 ID（見 _root_js）。"""
+        # 第 6 欄：在「這一篇」容器裡是 1（容器裡的背景音樂 <video> 是 2，不算影片）、不在是 0、頁面沒有這個容器是 -1
+        # （有指定 ID 卻找不到容器也是 0：一支都不算，繼續等）。抖音會預載別篇的影片（也可能「正在播放」），有容器時只信容器裡的。
+        expression = ("JSON.stringify((()=>{" + _root_js(target_id) +
+                      "return [...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.duration)?v.duration:-1,"
+                      "v.paused?1:0,v.currentTime,v.videoWidth,v.videoHeight,r?(r.contains(v)?(/ies-music|\\.mp3/.test(v.currentSrc||v.src||'')?2:1):0):(T?0:-1)])})())")
         self._videos = []
         self._eval_done.clear()
         self._pending_eval = set()
@@ -284,6 +332,31 @@ class CaptureSession:
             return []
         self._eval_done.wait(timeout)                  # 有頁面沒回應也不能一直等
         return list(self._videos)
+
+    def query_active_post(self, timeout: float = 3.0, target_id: str = "") -> dict | None:
+        """抖音圖文貼文：問頁面「目前這一篇」（data-e2e=feed-active-video 的容器）有哪些圖片、背景音樂網址。
+        頁面會預載別篇貼文的影片與圖片，網路請求分不出哪些屬於目前這篇；音樂本身也是一個 <video>（長度是音樂的），
+        所以要看 DOM。回傳 {"slides": [{"key", "src"}…（依頁面順序）], "music": 網址或 ""}；不是圖文或讀不到回傳 None。"""
+        expression = ("JSON.stringify((()=>{" + _root_js(target_id) + "if(!r)return {};"
+                      "const key=u=>{try{return new URL(u).pathname.split('~')[0]}catch(e){return ''}};const seen=new Set(),slides=[];"
+                      "r.querySelectorAll('img').forEach(i=>{if(/aweme-images/.test(i.src)&&!seen.has(key(i.src))){seen.add(key(i.src));"
+                      "slides.push({key:key(i.src),src:i.src})}});"
+                      "const m=[...r.querySelectorAll('video,audio')].map(v=>v.currentSrc||v.src||'').find(u=>/^https?:/.test(u))||'';"
+                      "return {slides:slides,music:m}})())")
+        self._post_values = []
+        self._post_done.clear()
+        self._pending_post = set()
+        for sid, ttype in list(self._sessions.items()):
+            if ttype in ("page", "iframe"):
+                try:
+                    self._pending_post.add(self._next_id)
+                    self._send("Runtime.evaluate", {"expression": expression, "returnByValue": True}, sid)
+                except Exception:  # noqa: BLE001
+                    return None
+        if not self._pending_post:
+            return None
+        self._post_done.wait(timeout)
+        return self._post_values[0] if self._post_values else None
 
     def query_playing_video(self, timeout: float = 3.0) -> float:
         """問頁面裡正在播放的 <video>：長度幾秒。正在播放的那支：沒暫停、已經播了一點的；沒有的話取播放進度最多的。
@@ -303,6 +376,8 @@ class CaptureSession:
 def playing_duration(videos: list[list[float]]) -> tuple[float, bool]:
     """(正在播放的那支的長度, 是不是真的在播)。沒在播的話退而取播放進度最多的，第二個值為 False。"""
     duration, best, playing_found = -1.0, -1.0, False
+    if any(len(v) > 5 and v[5] >= 0 for v in videos):          # 頁面有「目前這一篇」容器：只看容器裡的
+        videos = [v for v in videos if len(v) > 5 and v[5] == 1]
     for v in videos:
         playing = v[1] == 0 and v[2] > 0.3
         score = (1e6 if playing else 0) + v[2]
@@ -316,7 +391,7 @@ def playing_duration(videos: list[list[float]]) -> tuple[float, bool]:
 def pick_candidates(candidates: list[Candidate], target_duration: float) -> list[Candidate]:
     """有串流（m3u8／mpd）就用串流（yt-dlp 自己會挑最高的）；否則把偵測到的檔案（最多 12 個）全部抓下來，
     網址已經帶長度的先把明顯是別支影片的略過，少抓一些。"""
-    ordered = sorted(candidates, key=lambda c: c.seq)
+    ordered = sorted((c for c in candidates if c.kind != "slide"), key=lambda c: c.seq)
     for c in ordered:
         if c.kind == "stream":
             return [c]
@@ -511,11 +586,154 @@ def _remove(path: str) -> None:
         pass
 
 
-def download_and_merge(candidates: list[Candidate], target_duration: float, out_dir: str, ffmpeg_dir: str | None,
+SLIDE_FPS = 30
+
+
+def _slide_key(url: str) -> str:
+    """同一張圖會以不同尺寸（~tplv-… 後綴不同）、不同簽章重複請求；用檔案路徑 ~ 之前的部分當身分。"""
+    return urllib.parse.urlsplit(url).path.split("~", 1)[0]
+
+
+def slideshow_parts(candidates: list[Candidate]) -> tuple[list[Candidate], Candidate] | None:
+    """抖音圖文貼文：沒有任何影像／串流，只有圖片（slide）加音樂 → (依偵測順序的圖片, 音樂)；不是回傳 None。"""
+    ordered = sorted(candidates, key=lambda c: c.seq)
+    if any(c.kind in ("stream", "video") for c in ordered):
+        return None
+    slides: dict[str, Candidate] = {}
+    for c in ordered:
+        if c.kind == "slide":
+            old = slides.get(_slide_key(c.url))
+            if old is None or c.size > old.size:           # 同一張圖取最大的那個版本，位置仍是第一次出現的
+                slides[_slide_key(c.url)] = c if old is None else replace(old, url=c.url, size=c.size)
+    music = next((c for c in ordered if c.kind in ("audio", "media")), None)
+    return (list(slides.values()), music) if slides and music else None
+
+
+def slideshow_from_post(post: dict, candidates: list[Candidate]) -> tuple[list[Candidate], Candidate] | None:
+    """用 query_active_post 的結果組出目前這篇的圖片（依頁面順序）與音樂。圖片用頁面上的網址（頁面顯示的就是高解析版，
+    簽章完整可直接下載）；音樂以頁面上的為準，沒有的話退回偵測到的第一個聲音。"""
+    referer = next((c.referer for c in candidates if c.referer), "") or "https://www.douyin.com/"
+    slides = [Candidate(url=i["src"], mime="image/webp", kind="slide", referer=referer, seq=n)
+              for n, i in enumerate(post.get("slides") or [])]
+    if not slides:
+        return None
+    music_url = post.get("music") or ""
+    music = (Candidate(url=music_url, kind="audio", referer=referer) if music_url else None) \
+        or next((c for c in sorted(candidates, key=lambda x: x.seq) if c.kind in ("audio", "media")), None)
+    return (slides, music) if music else None
+
+
+def _fetch(url: str, referer: str, path: str) -> bool:
+    req = urllib.request.Request(url, headers={"Referer": referer or "https://www.douyin.com/", "User-Agent":
+                                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r, open(path, "wb") as f:
+            f.write(r.read())
+        return os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
+def make_slideshow(slides: list[str], audio: str, ffmpeg_dir: str | None, out: str, log: Callable[[str], None]) -> bool:
+    """圖片平均分配到音樂長度，和音樂合成 H.264 + AAC 的 mp4。與 shared 外掛 douyin_slideshow.py 同一套做法。"""
+    ffmpeg = str(Path(ffmpeg_dir) / "ffmpeg") if ffmpeg_dir else "ffmpeg"
+    ffprobe = str(Path(ffmpeg_dir) / "ffprobe") if ffmpeg_dir else "ffprobe"
+
+    def probe(path: str) -> dict:
+        r = subprocess.run([ffprobe, "-v", "error", "-print_format", "json", "-show_entries",
+                            "stream=width,height:format=duration", path],
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=_NO_WINDOW)
+        try:
+            return json.loads(r.stdout or "{}")
+        except ValueError:
+            return {}
+    try:
+        total = float(probe(audio).get("format", {}).get("duration") or 0)
+    except ValueError:
+        total = 0.0
+    each = max(total / len(slides), 1.0) if total else 3.0
+    first = next((st for st in probe(slides[0]).get("streams", []) if st.get("width")), None)
+    # 畫布 = 第一張圖的實際尺寸（長寬取偶數，最長邊不超過 4096），不縮小高解析的圖；讀不到尺寸用 1080x1920
+    w, h = 1080, 1920
+    if first:
+        k = min(1.0, 4096 / max(first["width"], first["height"]))
+        w, h = max(2, int(first["width"] * k) // 2 * 2), max(2, int(first["height"] * k) // 2 * 2)
+    fit = (f"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,"
+           f"setsar=1,fps={SLIDE_FPS},format=yuv420p")
+    n = len(slides)
+    graph = "".join(f"[{i}:v]{fit}[v{i}];" for i in range(n)) + "".join(f"[v{i}]" for i in range(n)) + f"concat=n={n}:v=1:a=0[v]"
+    cmd = [ffmpeg, "-y", "-loglevel", "error"]
+    for f in slides:
+        cmd += ["-loop", "1", "-t", f"{each:.3f}", "-i", f]
+    cmd += ["-i", audio, "-filter_complex", graph, "-map", "[v]", "-map", f"{n}:a:0", "-c:v", "libx264", "-preset", "fast",
+            "-crf", "20", "-c:a", "aac", "-b:a", "192k", *(["-t", f"{total:.3f}"] if total else ["-shortest"]),
+            "-movflags", "+faststart", out]
+    r = subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=_NO_WINDOW)
+    if r.returncode != 0 or not os.path.exists(out):
+        log("合成圖文影片失敗：" + (r.stderr or "").strip()[-300:])
+        return False
+    return True
+
+
+def download_slideshow(slides: list[Candidate], music: Candidate, out_dir: str, ffmpeg_dir: str | None,
                        log: Callable[[str], None], progress: Callable[[float], None] | None = None,
                        status: Callable[[str], None] | None = None, cancel: threading.Event | None = None) -> str | None:
-    """偵測到的影音 → 挑出要下載的 → 下載 → 挑最好的影像與聲音 → 合併。回傳結果路徑；停止或失敗回傳 None。"""
+    """抖音圖文貼文：下載圖片與音樂，合成 mp4。回傳結果路徑；失敗或停止回傳 None。"""
+    import tempfile
+    if not ffmpeg_dir and not shutil.which("ffmpeg"):
+        log("找不到 ffmpeg，無法合成圖文影片。")
+        return None
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    work = tempfile.mkdtemp(prefix="avd-slides-")
+    try:
+        log(f"抖音圖文貼文：{len(slides)} 張圖片 + 音樂")
+        if status:
+            status(f"下載 {len(slides)} 張圖片…")
+        files: list[str] = []
+        for i, c in enumerate(slides, 1):
+            if cancel is not None and cancel.is_set():
+                return None
+            f = os.path.join(work, f"{i:03d}.img")
+            if _fetch(c.url, c.referer, f):
+                files.append(f)
+            else:
+                log(f"第 {i} 張圖片下載失敗，略過：{c.url[:110]}")
+            if progress:
+                progress(i * 70 / len(slides))
+        if not files:
+            log("沒有下載到任何圖片。")
+            return None
+        if status:
+            status("下載音樂…")
+        audio = download_one(music, os.path.join(work, "music.%(ext)s"), ffmpeg_dir, log, None, cancel)
+        if not audio or (cancel is not None and cancel.is_set()):
+            return None
+        if progress:
+            progress(85)
+        if status:
+            status("合成影片…")
+        out = str(Path(out_dir) / f"擷取_{stamp}.mp4")
+        if not make_slideshow(files, audio, ffmpeg_dir, out, log):
+            return None
+        if progress:
+            progress(100)
+        log("完成：" + out)
+        return out
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def download_and_merge(candidates: list[Candidate], target_duration: float, out_dir: str, ffmpeg_dir: str | None,
+                       log: Callable[[str], None], progress: Callable[[float], None] | None = None,
+                       status: Callable[[str], None] | None = None, cancel: threading.Event | None = None,
+                       post: dict | None = None) -> str | None:
+    """偵測到的影音 → 挑出要下載的 → 下載 → 挑最好的影像與聲音 → 合併。回傳結果路徑；停止或失敗回傳 None。
+    post：query_active_post 的結果；頁面確定目前是圖文貼文時，不管偵測到什麼影片（多半是預載的別篇）都合成圖文影片。"""
     from yt_dlp.utils import DownloadCancelled
+    parts = (slideshow_from_post(post, candidates) if post else None) or (None if post else slideshow_parts(candidates))
+    if parts:
+        return download_slideshow(*parts, out_dir, ffmpeg_dir, log, progress, status, cancel)
     queue = pick_candidates(candidates, target_duration)
     if not queue:
         return None
@@ -589,19 +807,52 @@ def auto_capture(session: CaptureSession, out_dir: str, ffmpeg_dir: str | None, 
     say("等待網頁開始播放影片…")
     deadline = time.monotonic() + AUTO_WAIT_SECONDS
     target = -1.0
+    slideshow = False
+    post: dict | None = None
+    post_sig, post_since = None, time.monotonic()
+    seen_count, seen_change = len(session.seen), time.monotonic()
+    tid = session.start_target_id
+    hit = False
     while time.monotonic() < deadline and not cancelled():
-        if session.seen:
-            target, playing = playing_duration(session.query_videos(2.0))
-            if playing and target > 0:
+        # 有指定抖音影片 ID 就不等偵測到影音才問：網路偵測常比實際播放晚好幾秒，短影片可能已經播完換下一支
+        if session.seen or tid:
+            if len(session.seen) != seen_count:
+                seen_count, seen_change = len(session.seen), time.monotonic()
+            # 抖音圖文貼文：頁面上目前這篇有圖片，音樂本身也是個 <video>，頁面還會預載別篇的影片（也可能「正在播放」），
+            # 所以只要頁面說目前是圖文，就不再看其他影片；圖片清單穩定一陣子就開始。
+            post = session.query_active_post(2.0, tid)
+            if post:
+                sig = [i["key"] for i in post["slides"]]
+                if sig != post_sig:
+                    post_sig, post_since = sig, time.monotonic()
+                elif time.monotonic() - post_since >= AUTO_SETTLE_SECONDS and slideshow_from_post(post, list(session.seen.values())):
+                    slideshow = True
+                    break
+                time.sleep(0.5)
+                continue
+            target, playing = playing_duration(session.query_videos(2.0, tid))
+            hit = bool(tid) and target > 0          # 找到指定 ID 那支的長度（不一定還在播：可能已播完換下一支）
+            if target > 0 and (playing or hit):
                 break
             target = -1.0
         time.sleep(0.5)
     if cancelled():
         return None, "cancelled"
+    if slideshow:
+        path = download_and_merge(list(session.seen.values()), -1, out_dir, ffmpeg_dir, log, progress, status, cancel, post)
+        return (path, "ok") if path else (None, "cancelled" if cancelled() else "failed")
     if target <= 0:
         return None, "manual"
-    log(f"鎖定正在播放的影片長度：{target:.2f} 秒")
+    log(f"鎖定網址指定的抖音影片（{tid}）長度：{target:.2f} 秒" if hit else f"鎖定正在播放的影片長度：{target:.2f} 秒")
     say("等待影像與聲音都出現…")
+    # 鎖定可能早於偵測到任何影音（有指定 ID 時不等候選就先問）：至少要有一個候選，才開始算「穩定」
+    wait_deadline = time.monotonic() + AUTO_WAIT_SECONDS
+    while not session.seen and time.monotonic() < wait_deadline and not cancelled():
+        time.sleep(0.2)
+    if cancelled():
+        return None, "cancelled"
+    if not session.seen:
+        return None, "manual"
     last_count, last_change = len(session.seen), time.monotonic()
     settle_deadline = time.monotonic() + 8
     while time.monotonic() < settle_deadline and not cancelled():
@@ -649,7 +900,7 @@ def run_headless(url: str, out_dir: str, wait_seconds: float = 4, profile: str |
         time.sleep(wait_seconds)
         target = session.query_playing_video()
         log(f"正在播放的影片長度：{target:.1f} 秒" if target > 0 else "讀不到正在播放的影片長度，改用偵測順序判斷")
-        return download_and_merge(list(session.seen.values()), target, out_dir, ffmpeg_dir, log)
+        return download_and_merge(list(session.seen.values()), target, out_dir, ffmpeg_dir, log, post=session.query_active_post())
     finally:
         session.stop()
 
@@ -767,10 +1018,11 @@ def _make_dialog_class():
             def work() -> None:
                 # 先問瀏覽器：現在在播的是哪一支（長度幾秒）。Facebook 等網站會預先載入下一支，要靠長度把它們分開。
                 target = self.session.query_playing_video() if self.session and self.browser_open else -1
+                post = self.session.query_active_post() if self.session and self.browser_open else None
                 self.q.put(("log", f"正在播放的影片長度：{target:.1f} 秒" if target > 0 else "讀不到正在播放的影片長度，改用偵測順序判斷"))
                 path = download_and_merge(list(self.candidates.values()), target, self.out_dir, self.ffmpeg_dir,
                                           lambda t: self.q.put(("log", t)), lambda p: self.q.put(("progress", p)),
-                                          lambda t: self.q.put(("status", t)), self.cancel)
+                                          lambda t: self.q.put(("status", t)), self.cancel, post)
                 self.q.put(("done", path))
             self.job = threading.Thread(target=work, daemon=True)
             self.job.start()

@@ -173,6 +173,7 @@ QStringList buildDownloadArgs(const Settings& s, const QString& ffmpegDir, const
             // 不轉檔、不重新封裝成別的容器、不碰 EnsureH264。合併只是把影像與聲音串流複製進同一個容器：
             // 兩邊都放得進 mp4 就用 mp4，否則 mkv（什麼都裝得下）。結果與網站提供的串流解碼後逐格相同。
             a << "--merge-output-format" << "mp4/mkv";
+            if (!plugins.isEmpty()) a << "--use-postprocessor" << "DouyinSlideshow";   // 抖音圖文：音樂 + 圖片合成 mp4
             if (s.embedSubs) a << "--embed-subs" << "--sub-langs" << "zh.*,en.*";
             if (s.embedMeta) a << "--embed-metadata" << "--embed-chapters";
             a << "--" << url;
@@ -198,6 +199,8 @@ QStringList buildDownloadArgs(const Settings& s, const QString& ffmpegDir, const
 
         // yt-dlp 命令列的後處理順序固定是：--use-postprocessor → 重新封裝 → 轉檔 →
         // 字幕 → 資訊 → 封面。EnsureH264 正好排在最前面。
+        // DouyinSlideshow 比它更前面（抖音圖文只拿得到音樂，先合成 mp4；其他網址不動作）。
+        if (!plugins.isEmpty()) a << "--use-postprocessor" << "DouyinSlideshow";
         if (c == "mov" || (compat && kCompatH264Containers.contains(c))) {
             a << "--use-postprocessor" << QString("EnsureH264:video_ok=") + (compat ? "h264" : "h264,hevc");
             a << "--remux-video" << c;

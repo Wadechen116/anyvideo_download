@@ -79,6 +79,7 @@ PP_LABELS = {
     "EmbedSubtitle": "嵌入字幕",
     "MoveFiles": "整理檔案",
     "EnsureH264": "轉成相容編碼 H.264（比較慢）",
+    "DouyinSlideshow": "合成抖音圖文影片",
 }
 
 # 背景呼叫 ffmpeg / ffprobe 時不要彈出主控台視窗
@@ -279,6 +280,7 @@ def build_ydl_options(s: Settings, ffmpeg_dir: str | None) -> dict:
             # 不轉檔、不重新封裝成別的容器、不碰 EnsureH264。合併只是把影像與聲音串流複製進同一個容器：
             # 兩邊都放得進 mp4 就用 mp4，否則 mkv（什麼都裝得下）。結果與網站提供的串流解碼後逐格相同。
             opts["merge_output_format"] = "mp4/mkv"
+            pps.append({"key": "DouyinSlideshow"})        # 抖音圖文貼文：音樂 + 圖片合成 mp4（其他網址不動作）
             if s.embed_subs:
                 opts["writesubtitles"] = True
                 opts["subtitleslangs"] = ["zh.*", "en.*"]
@@ -328,6 +330,10 @@ def build_ydl_options(s: Settings, ffmpeg_dir: str | None) -> dict:
         #
         # EnsureH264 必須在寫入資訊／封面／字幕之前：重新編碼只保留第一條影像與
         # 聲音串流，排在後面會把剛嵌進去的東西洗掉。
+        #
+        # DouyinSlideshow 排在最前面：抖音圖文貼文只拿得到音樂，先合成 H.264 + AAC 的 mp4，
+        # 後面的轉檔看到已經是 mp4 就略過。不是抖音圖文時它什麼都不做。
+        pps.append({"key": "DouyinSlideshow"})
         if c == "mov" or (compat and c in COMPAT_H264_CONTAINERS):
             # 先把不相容的那一邊重新編碼成 H.264／AAC，之後一定能直接改封裝，
             # 不必再轉檔一次。
@@ -403,6 +409,23 @@ def _probe_codecs(path: str, ffmpeg_dir: str | None) -> tuple[str | None, str | 
             acodec = acodec or st.get("codec_name")
     return vcodec, acodec
 
+
+def _load_slideshow_pp():
+    """載入 shared\\yt-dlp-plugins 裡的 DouyinSlideshowPP（Qt 版與 C# 版用的是同一個檔）；找不到回傳 None。"""
+    import importlib.util
+    rel = Path("anyvideo") / "yt_dlp_plugins" / "postprocessor" / "douyin_slideshow.py"
+    here = Path(__file__).resolve().parent
+    for base in (here / "yt-dlp-plugins", here.parent / "shared" / "yt-dlp-plugins"):
+        f = base / rel
+        if f.is_file():
+            spec = importlib.util.spec_from_file_location("avd_douyin_slideshow", f)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod.DouyinSlideshowPP
+    return None
+
+
+_DouyinSlideshowPP = _load_slideshow_pp() if yt_dlp is not None else None
 
 if yt_dlp is not None:
     from yt_dlp.postprocessor import get_postprocessor
@@ -847,7 +870,7 @@ def platform_hint(platform: str, kind: str, error_text: str, uses_cookies: bool,
                     + ("已經選了瀏覽器仍失敗：請先關閉瀏覽器再試（Chrome／Edge 開著時讀不到 cookies），或改用 Firefox。" if uses_cookies else "")
                     + "還是不行就用「從瀏覽器擷取」：瀏覽器能播，就能抓。")
         if kind == "update" or "Unsupported URL" in error_text:
-            return "這個抖音網址形式 yt-dlp 不支援（例如圖文 /note/）或網站改版了。可以改用「從瀏覽器擷取」。"
+            return "這個抖音網址形式 yt-dlp 不支援（例如 /note/ 網址）或網站改版了。可以改用「從瀏覽器擷取」。"
     if platform == "xiaohongshu":
         if "certificate" in error_text.lower() or "SSL" in error_text:
             return ("連到小紅書時憑證驗證失敗：你目前的網路把 xiaohongshu.com 導向了別的伺服器（憑證不是小紅書的），"
@@ -933,6 +956,11 @@ class DownloadJob(threading.Thread):
             when = d.pop("when", "post_process")
             if key == "EnsureH264":
                 pp = EnsureH264PP(ydl, ffmpeg_dir=self.ffmpeg_dir, **d)
+            elif key == "DouyinSlideshow":
+                if _DouyinSlideshowPP is None:
+                    self.post("log", "找不到 douyin_slideshow.py，抖音圖文貼文只會下載到音樂", "warn")
+                    continue
+                pp = _DouyinSlideshowPP(ydl)
             else:
                 pp = get_postprocessor(key)(ydl, **d)
             ydl.add_post_processor(pp, when=when)

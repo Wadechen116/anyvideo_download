@@ -25,12 +25,15 @@ using System.Text.RegularExpressions;
 
 namespace AnyVideoDownload;
 
+/// <summary>頁面上目前這一篇抖音圖文貼文：圖片網址（依頁面順序，高解析版、簽章完整）與背景音樂網址（可能是空字串）。</summary>
+public sealed record PostInfo(List<string> Slides, string Music);
+
 public sealed class Candidate
 {
     public string Url { get; set; } = "";       // 已去掉 bytestart／byteend（Meta 把一個檔切成很多段請求）
     public string Mime { get; set; } = "";
     public string Referer { get; set; } = "";
-    public string Kind { get; set; } = "";      // stream（m3u8／mpd）、video、audio、media
+    public string Kind { get; set; } = "";      // stream（m3u8／mpd）、video、audio、media、slide（抖音圖文的圖片）
     public long Size { get; set; } = -1;        // 未知為 -1
     public int Seq { get; set; }                // 第幾個被偵測到（越小越早）
 }
@@ -59,6 +62,7 @@ public static partial class CaptureUtil
         if (path.EndsWith(".mpd") || m.Contains("dash+xml")) return "stream";
         // 切片檔單獨拿沒有用：.ts／.m4s 是串流的一小段，要靠 m3u8／mpd 才能組回來
         if (path.EndsWith(".ts") || path.EndsWith(".m4s") || m.Contains("mp2t")) return "";
+        if (m.StartsWith("image/") && url.Contains("aweme-images")) return "slide";   // 抖音圖文貼文的圖片（封面、頭像不帶這個字）
         if (m.StartsWith("audio/")) return "audio";
         if (m.StartsWith("video/")) return "video";
         if (path.EndsWith(".mp4") || path.EndsWith(".webm") || path.EndsWith(".m4a")) return "media";
@@ -127,6 +131,17 @@ public sealed class CaptureSession : IDisposable
     /// <summary>上一次 QueryPlayingVideoAsync 讀到的那支是不是真的在播（沒暫停、播了一點）。</summary>
     public bool LastQueryPlaying { get; private set; }
 
+    /// <summary>上一次 QueryPlayingVideoAsync 找到指定抖音影片 ID 那支的長度（不一定還在播：可能已播完換下一支）。</summary>
+    public bool LastQueryTargetHit { get; private set; }
+
+    /// <summary>開啟網址裡的抖音影片 ID（自動擷取只認這支）；沒有是空字串。帳號開著自動連播時，短影片播完頁面就換下一支，
+    /// 網址的 modal_id 與 feed-active-video 都會跟著變，所以開始時就固定下來。</summary>
+    public string StartTargetId { get; private set; } = "";
+
+    /// <summary>上一次 QueryPlayingVideoAsync 讀到的抖音圖文貼文（頁面上「目前這一篇」的圖片依頁面順序、背景音樂網址）；不是圖文為 null。</summary>
+    public PostInfo? LastPost { get; private set; }
+    private PostInfo? _post;
+
     public IReadOnlyList<Candidate> Candidates { get { lock (_gate) return [.. _seen.Values]; } }
 
     /// <param name="profile">null：用 AVD_CAPTURE_PROFILE（測試用，不碰你平常的擷取設定檔），再沒有就用 %APPDATA%\anyvideo_download\capture-profile。</param>
@@ -145,6 +160,7 @@ public sealed class CaptureSession : IDisposable
         _port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
         _startUrl = startUrl;
+        StartTargetId = Platforms.DouyinVideoId(startUrl);
         // 獨立的設定檔：不影響你平常用的瀏覽器（Chrome 也規定偵錯模式必須用獨立設定檔）。
         // 要看登入限定的內容，在這個視窗登入一次，下次還在。
         // 用 Shell 啟動（UseShellExecute）：Shell 啟動的程序不會繼承我們的 handle。一般的 CreateProcess 會讓瀏覽器繼承我們所有可繼承的
@@ -267,13 +283,18 @@ public sealed class CaptureSession : IDisposable
             lock (_gate) known = _pendingEval.Contains(id);
             if (known)                                                      // Runtime.evaluate 的結果
             {
-                var value = m["result"]?["result"]?["value"]?.GetValue<string>() ?? "[]";
+                var value = m["result"]?["result"]?["value"]?.GetValue<string>() ?? "{}";
                 lock (_gate)
                 {
                     try
                     {
-                        foreach (var row in JsonNode.Parse(value)?.AsArray() ?? [])
+                        var reply = JsonNode.Parse(value);
+                        foreach (var row in reply?["v"]?.AsArray() ?? [])
                             if (row is JsonArray a && a.Count >= 5) _videos.Add(a.Select(x => x?.GetValue<double>() ?? -1).ToArray());
+                        if (_post is null && reply?["post"]?["slides"] is JsonArray ps && ps.Count > 0)
+                            _post = new PostInfo(
+                                [.. ps.Select(x => x?["src"]?.GetValue<string>() ?? "").Where(u => u != "")],
+                                reply["post"]!["music"]?.GetValue<string>() ?? "");
                     }
                     catch (Exception e) when (e is System.Text.Json.JsonException or InvalidOperationException or FormatException) { }
                     _pendingEval.Remove(id);
@@ -333,14 +354,28 @@ public sealed class CaptureSession : IDisposable
     /// 問頁面裡正在播放的 &lt;video&gt;：長度幾秒。正在播放的那支：沒暫停、已經播了一點的；沒有的話取播放進度最多的。
     /// 長度不明（直播等）或讀不到回傳 -1。
     /// </summary>
-    public async Task<double> QueryPlayingVideoAsync(int timeoutMs = 3000)
+    /// <param name="targetId">抖音影片 ID：有的話只認帶 data-e2e-vid=ID 的容器裡那支（不管是否正在播放）。</param>
+    public async Task<double> QueryPlayingVideoAsync(int timeoutMs = 3000, string targetId = "")
     {
-        const string expression =
-            "JSON.stringify([...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.duration)?v.duration:-1,v.paused?1:0,v.currentTime,v.videoWidth,v.videoHeight]))";
+        // 除了 <video> 的狀態，也一併問頁面「這一篇」是不是抖音圖文貼文：圖片依頁面順序、背景音樂網址。
+        // 音樂本身也是個 <video>，頁面還會預載別篇的影片與圖片，只看網路請求或 <video> 會抓錯。
+        // 「這一篇」的容器：有指定 ID 時是帶 data-e2e-vid=ID 的容器（播完換下一支後仍留在頁面上）；沒指定時是 data-e2e=feed-active-video。
+        var t = targetId.Length > 0 && targetId.All(char.IsAsciiDigit) ? targetId : "";
+        var expression = "JSON.stringify((()=>{const T='" + t + "';" + """
+            const els=T?[...document.querySelectorAll('[data-e2e-vid="'+T+'"]')]:[];
+            const r=T?(els.find(e=>e.querySelector('video'))||els.find(e=>e.querySelector('img'))||null):document.querySelector('[data-e2e="feed-active-video"]');let post={};
+            // 第 6 欄：在這一篇容器裡是 1（容器裡的背景音樂 <video> 是 2）、不在是 0、頁面沒有這個容器是 -1（有指定 ID 卻找不到容器也是 0：一支都不算，繼續等）
+            const v=[...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.duration)?v.duration:-1,v.paused?1:0,v.currentTime,v.videoWidth,v.videoHeight,r?(r.contains(v)?(/ies-music|\.mp3/.test(v.currentSrc||v.src||'')?2:1):0):(T?0:-1)]);
+            if(r){const key=u=>{try{return new URL(u).pathname.split('~')[0]}catch(e){return ''}};const seen=new Set(),slides=[];
+            r.querySelectorAll('img').forEach(i=>{if(/aweme-images/.test(i.src)&&!seen.has(key(i.src))){seen.add(key(i.src));slides.push({key:key(i.src),src:i.src})}});
+            const m=[...r.querySelectorAll('video,audio')].map(v=>v.currentSrc||v.src||'').find(u=>/^https?:/.test(u))||'';post={slides:slides,music:m}}
+            return {v:v,post:post}})())
+            """;
         string[] targets;
         lock (_gate)
         {
             _videos.Clear();
+            _post = null;
             _pendingEval.Clear();
             _evalDone = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             targets = [.. _sessions.Where(kv => kv.Value is "page" or "iframe").Select(kv => kv.Key)];
@@ -360,13 +395,19 @@ public sealed class CaptureSession : IDisposable
         double duration = -1, best = -1;
         var playingFound = false;
         lock (_gate)
+        {
+            var haveRoot = _videos.Any(v => v.Length > 5 && v[5] >= 0);
             foreach (var v in _videos)
             {
+                if (haveRoot && !(v.Length > 5 && v[5] == 1)) continue;
                 var playing = v[1] == 0 && v[2] > 0.3;
                 var score = (playing ? 1e6 : 0) + v[2];
                 if (v[0] > 0 && score > best) { best = score; duration = v[0]; playingFound = playing; }
             }
+        }
         LastQueryPlaying = playingFound;
+        LastQueryTargetHit = t.Length > 0 && duration > 0;
+        lock (_gate) LastPost = _post;
         return duration;
     }
 
@@ -399,7 +440,7 @@ public static class CaptureRunner
     /// <summary>有串流（m3u8／mpd）就用串流（yt-dlp 自己會挑最高的）；否則把偵測到的檔案（最多 12 個）全部抓下來，網址已經帶長度的先把明顯是別支影片的略過。</summary>
     public static List<Candidate> PickCandidates(IEnumerable<Candidate> candidates, double targetDuration)
     {
-        var ordered = candidates.OrderBy(c => c.Seq).ToList();
+        var ordered = candidates.Where(c => c.Kind != "slide").OrderBy(c => c.Seq).ToList();
         if (ordered.FirstOrDefault(c => c.Kind == "stream") is { } stream) return [stream];
         if (targetDuration > 0)
         {
@@ -409,11 +450,146 @@ public static class CaptureRunner
         return ordered.Take(CaptureUtil.MaxFiles).ToList();
     }
 
+    private static string SlideKey(string url) => (Uri.TryCreate(url, UriKind.Absolute, out var u) ? u.AbsolutePath : url).Split('~')[0];
+
+    /// <summary>抖音圖文貼文：沒有任何影像／串流，只有圖片（slide）加音樂 → 依偵測順序的圖片與音樂；不是回傳 null。
+    /// 同一張圖會以不同尺寸（~tplv-… 後綴不同）、不同簽章重複請求，用檔案路徑 ~ 之前的部分當身分。</summary>
+    public static (List<Candidate> Slides, Candidate Music)? SlideshowParts(IEnumerable<Candidate> candidates, PostInfo? post = null)
+    {
+        var ordered = candidates.OrderBy(c => c.Seq).ToList();
+        // 頁面說目前這一篇是圖文貼文：用頁面上的圖片網址與音樂，不管偵測到什麼影片（多半是預載的別篇）
+        if (post is { Slides.Count: > 0 })
+        {
+            var referer = ordered.Select(c => c.Referer).FirstOrDefault(r => r != "") ?? "https://www.douyin.com/";
+            var pm = post.Music != ""
+                ? new Candidate { Url = post.Music, Kind = "audio", Referer = referer }
+                : ordered.FirstOrDefault(c => c.Kind is "audio" or "media");
+            return pm is null ? null : (post.Slides.Select((u, i) => new Candidate { Url = u, Mime = "image/webp", Kind = "slide", Referer = referer, Seq = i }).ToList(), pm);
+        }
+        if (ordered.Any(c => c.Kind is "stream" or "video")) return null;
+        var slides = new Dictionary<string, Candidate>();
+        foreach (var c in ordered.Where(c => c.Kind == "slide"))
+        {
+            var key = SlideKey(c.Url);
+            if (!slides.TryGetValue(key, out var old)) slides[key] = c;
+            else if (c.Size > old.Size)     // 同一張圖取最大的版本，位置仍是第一次出現的（複製一份，不動偵測階段的資料）
+                slides[key] = new Candidate { Url = c.Url, Mime = old.Mime, Referer = old.Referer, Kind = old.Kind, Size = c.Size, Seq = old.Seq };
+        }
+        var music = ordered.FirstOrDefault(c => c.Kind is "audio" or "media");
+        return slides.Count > 0 && music is not null ? (slides.Values.ToList(), music) : null;
+    }
+
+    private static readonly HttpClient SlideHttp = new() { Timeout = TimeSpan.FromSeconds(30) };
+
+    /// <summary>圖片平均分配到音樂長度，和音樂合成 H.264 + AAC 的 mp4。與 shared 外掛 douyin_slideshow.py 同一套做法。</summary>
+    private static async Task<bool> MakeSlideshowAsync(List<string> slides, string audio, string ffmpegDir, string output, Action<string> log)
+    {
+        async Task<(int Code, string Out, string Err)> RunAsync(string exe, IEnumerable<string> args)
+        {
+            using var p = Core.CreateProcess(Path.Combine(ffmpegDir, exe), args);
+            try { p.Start(); }
+            catch (Exception e) when (e is System.ComponentModel.Win32Exception or InvalidOperationException) { return (-1, "", e.Message); }
+            var o = p.StandardOutput.ReadToEndAsync();
+            var er = p.StandardError.ReadToEndAsync();
+            await p.WaitForExitAsync().ConfigureAwait(false);
+            return (p.ExitCode, await o.ConfigureAwait(false), await er.ConfigureAwait(false));
+        }
+        JsonNode? Parse(string s) { try { return JsonNode.Parse(s); } catch (System.Text.Json.JsonException) { return null; } }
+
+        var probeA = Parse((await RunAsync("ffprobe.exe", ["-v", "error", "-print_format", "json", "-show_entries", "format=duration", audio]).ConfigureAwait(false)).Out);
+        _ = double.TryParse(probeA?["format"]?["duration"]?.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var total);
+        var each = total > 0 ? Math.Max(total / slides.Count, 1.0) : 3.0;
+        // 畫布 = 第一張圖的實際尺寸（長寬取偶數，最長邊不超過 4096），不縮小高解析的圖；讀不到尺寸用 1080x1920
+        int w = 1080, h = 1920;
+        var probeI = Parse((await RunAsync("ffprobe.exe", ["-v", "error", "-print_format", "json", "-show_entries", "stream=width,height", slides[0]]).ConfigureAwait(false)).Out);
+        if (probeI?["streams"] is JsonArray arr && arr.Count > 0 && (arr[0]?["width"]?.GetValue<int>() ?? 0) > 0)
+        {
+            int iw = arr[0]!["width"]!.GetValue<int>(), ih = arr[0]?["height"]?.GetValue<int>() ?? 0;
+            var k = Math.Min(1.0, 4096.0 / Math.Max(iw, ih));
+            w = Math.Max(2, (int)(iw * k) / 2 * 2);
+            h = Math.Max(2, (int)(ih * k) / 2 * 2);
+        }
+        var fit = $"scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30,format=yuv420p";
+        var n = slides.Count;
+        var graph = string.Concat(Enumerable.Range(0, n).Select(i => $"[{i}:v]{fit}[v{i}];")) +
+                    string.Concat(Enumerable.Range(0, n).Select(i => $"[v{i}]")) + $"concat=n={n}:v=1:a=0[v]";
+        var a = new List<string> { "-y", "-loglevel", "error" };
+        foreach (var f in slides) a.AddRange(["-loop", "1", "-t", each.ToString("F3", CultureInfo.InvariantCulture), "-i", f]);
+        a.AddRange(["-i", audio, "-filter_complex", graph, "-map", "[v]", "-map", $"{n}:a:0", "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+                    "-c:a", "aac", "-b:a", "192k"]);
+        if (total > 0) a.AddRange(["-t", total.ToString("F3", CultureInfo.InvariantCulture)]); else a.Add("-shortest");   // -shortest 遇到真實的抖音音樂會把聲音截短
+        a.AddRange(["-movflags", "+faststart", output]);
+        var r = await RunAsync("ffmpeg.exe", a).ConfigureAwait(false);
+        if (r.Code != 0 || !File.Exists(output))
+        {
+            log("合成圖文影片失敗：" + (r.Err.Trim().Length > 300 ? r.Err.Trim()[^300..] : r.Err.Trim()));
+            return false;
+        }
+        return true;
+    }
+
+    /// <summary>抖音圖文貼文：下載圖片與音樂，合成 mp4。回傳結果路徑；失敗或停止回傳 null。</summary>
+    private static async Task<string?> DownloadSlideshowAsync(
+        List<Candidate> slides, Candidate music, string outDir, Engine engine, string? ffmpegDir,
+        Action<string> log, Action<double>? progress, Action<string>? status, CancellationToken ct)
+    {
+        if (string.IsNullOrEmpty(ffmpegDir)) { log("找不到 ffmpeg，無法合成圖文影片。"); return null; }
+        Directory.CreateDirectory(outDir);
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
+        var work = Path.Combine(Path.GetTempPath(), "avd-slides-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(work);
+        try
+        {
+            log($"抖音圖文貼文：{slides.Count} 張圖片 + 音樂");
+            status?.Invoke($"下載 {slides.Count} 張圖片…");
+            var files = new List<string>();
+            for (var i = 0; i < slides.Count; i++)
+            {
+                if (ct.IsCancellationRequested) return null;
+                try
+                {
+                    using var req = new HttpRequestMessage(HttpMethod.Get, slides[i].Url);
+                    req.Headers.TryAddWithoutValidation("Referer", string.IsNullOrEmpty(slides[i].Referer) ? "https://www.douyin.com/" : slides[i].Referer);
+                    req.Headers.TryAddWithoutValidation("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36");
+                    using var resp = await SlideHttp.SendAsync(req, ct).ConfigureAwait(false);
+                    resp.EnsureSuccessStatusCode();
+                    var f = Path.Combine(work, $"{i + 1:D3}.img");
+                    await File.WriteAllBytesAsync(f, await resp.Content.ReadAsByteArrayAsync(ct).ConfigureAwait(false), ct).ConfigureAwait(false);
+                    files.Add(f);
+                }
+                catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
+                {
+                    if (ct.IsCancellationRequested) return null;
+                    log($"第 {i + 1} 張圖片下載失敗，略過：{e.Message}");
+                }
+                progress?.Invoke((i + 1) * 70.0 / slides.Count);
+            }
+            if (files.Count == 0) { log("沒有下載到任何圖片。"); return null; }
+            status?.Invoke("下載音樂…");
+            var (code, audio) = await DownloadOneAsync(music, Path.Combine(work, "music.%(ext)s"), engine, ffmpegDir, true, null, ct).ConfigureAwait(false);
+            if (code != 0) (code, audio) = await DownloadOneAsync(music, Path.Combine(work, "music.%(ext)s"), engine, ffmpegDir, false, null, ct).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return null;
+            if (code != 0 || audio is null) { log("音樂下載失敗。"); return null; }
+            progress?.Invoke(85);
+            status?.Invoke("合成影片…");
+            var output = Path.Combine(outDir, $"擷取_{stamp}.mp4");
+            if (!await MakeSlideshowAsync(files, audio, ffmpegDir, output, log).ConfigureAwait(false)) return null;
+            progress?.Invoke(100);
+            log("完成：" + output);
+            return output;
+        }
+        finally { try { Directory.Delete(work, true); } catch (IOException) { } }
+    }
+
     public static async Task<string?> DownloadAndMergeAsync(
         IEnumerable<Candidate> candidates, double targetDuration, string outDir, Engine engine, string? ffmpegDir,
-        Action<string> log, Action<double>? progress = null, Action<string>? status = null, CancellationToken ct = default)
+        Action<string> log, Action<double>? progress = null, Action<string>? status = null, CancellationToken ct = default,
+        PostInfo? post = null)
     {
-        var queue = PickCandidates(candidates, targetDuration);
+        var candidateList = candidates.ToList();
+        if (SlideshowParts(candidateList, post) is { } parts)
+            return await DownloadSlideshowAsync(parts.Slides, parts.Music, outDir, engine, ffmpegDir, log, progress, status, ct).ConfigureAwait(false);
+        var queue = PickCandidates(candidateList, targetDuration);
         if (queue.Count == 0) return null;
         Directory.CreateDirectory(outDir);
         var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss", CultureInfo.InvariantCulture);
@@ -639,19 +815,48 @@ public static class CaptureRunner
         status?.Invoke("等待網頁開始播放影片…");
         var deadline = DateTime.UtcNow.AddSeconds(AutoWaitSeconds);
         double target = -1;
+        var slideshow = false;
+        PostInfo? post = null;
+        var postSig = "";
+        var postClock = Stopwatch.StartNew();
+        var tid = session.StartTargetId;
+        var hit = false;
         while (DateTime.UtcNow < deadline && !ct.IsCancellationRequested)
         {
-            if (session.Candidates.Count > 0)
+            // 有指定抖音影片 ID 就不等偵測到影音才問：網路偵測常比實際播放晚好幾秒，短影片可能已經播完換下一支
+            if (session.Candidates.Count > 0 || tid.Length > 0)
             {
-                var d = await session.QueryPlayingVideoAsync(2000).ConfigureAwait(false);
-                if (d > 0 && session.LastQueryPlaying) { target = d; break; }
+                var d = await session.QueryPlayingVideoAsync(2000, tid).ConfigureAwait(false);
+                // 抖音圖文貼文：頁面說目前這篇有圖片就不再看其他影片（音樂也是 <video>，別篇預載的影片也可能「正在播放」）；圖片清單穩定一陣子就開始
+                if (session.LastPost is { } lp)
+                {
+                    var sig = string.Join("|", lp.Slides);
+                    if (sig != postSig) { postSig = sig; postClock.Restart(); }
+                    else if (postClock.ElapsedMilliseconds >= AutoSettleMs && SlideshowParts(session.Candidates, lp) is not null) { slideshow = true; post = lp; break; }
+                    await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
+                    continue;
+                }
+                if (d > 0 && (session.LastQueryPlaying || session.LastQueryTargetHit)) { target = d; hit = session.LastQueryTargetHit; break; }
             }
             await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
         }
         if (ct.IsCancellationRequested) return (null, "cancelled", target);
+        if (slideshow)
+        {
+            var slidePath = await DownloadAndMergeAsync(session.Candidates, -1, outDir, engine, ffmpegDir, log, progress, status, ct, post).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return (null, "cancelled", target);
+            return slidePath is null ? (null, "failed", target) : (slidePath, "ok", target);
+        }
         if (target <= 0) return (null, "manual", target);
-        log($"鎖定正在播放的影片長度：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
+        log(hit ? $"鎖定網址指定的抖音影片（{tid}）長度：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒"
+                : $"鎖定正在播放的影片長度：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
         status?.Invoke("等待影像與聲音都出現…");
+        // 鎖定可能早於偵測到任何影音（有指定 ID 時不等候選就先問）：至少要有一個候選，才開始算「穩定」
+        var waitDeadline = DateTime.UtcNow.AddSeconds(AutoWaitSeconds);
+        while (session.Candidates.Count == 0 && DateTime.UtcNow < waitDeadline && !ct.IsCancellationRequested)
+            await Task.Delay(200, CancellationToken.None).ConfigureAwait(false);
+        if (ct.IsCancellationRequested) return (null, "cancelled", target);
+        if (session.Candidates.Count == 0) return (null, "manual", target);
         var count = session.Candidates.Count;
         var changed = Stopwatch.StartNew();
         var settle = Stopwatch.StartNew();
@@ -689,6 +894,6 @@ public static class CaptureRunner
         await Task.Delay(TimeSpan.FromSeconds(waitSeconds)).ConfigureAwait(false);
         var target = await session.QueryPlayingVideoAsync().ConfigureAwait(false);
         log(target > 0 ? $"正在播放的影片長度：{target.ToString("F1", CultureInfo.InvariantCulture)} 秒" : "讀不到正在播放的影片長度，改用偵測順序判斷");
-        return await DownloadAndMergeAsync(session.Candidates, target, outDir, engine, ffmpegDir, log).ConfigureAwait(false);
+        return await DownloadAndMergeAsync(session.Candidates, target, outDir, engine, ffmpegDir, log, post: session.LastPost).ConfigureAwait(false);
     }
 }

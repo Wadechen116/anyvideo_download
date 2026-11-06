@@ -27,7 +27,7 @@ struct MediaCandidate {
     QString url;       // 已去掉 bytestart／byteend（Meta 把一個檔切成很多段請求）
     QString mime;
     QString referer;
-    QString kind;      // stream（m3u8／mpd）、video、audio、media
+    QString kind;      // stream（m3u8／mpd）、video、audio、media、slide（抖音圖文的圖片）
     qint64 size = -1;  // 未知為 -1
     int seq = 0;       // 第幾個被偵測到（越小越早）
 };
@@ -44,7 +44,11 @@ public:
     bool start(const QString& startUrl, QString* error);
     void stop();   // 結束監聽（瀏覽器視窗不關）
     // 問頁面裡正在播放的 <video>：長度幾秒。用來分辨「使用者在看的那支」和預先載入的下一支。
-    void queryPlayingVideo();
+    // targetId：抖音影片 ID；有的話只認帶 data-e2e-vid=ID 的容器裡那支（不管是否正在播放）
+    void queryPlayingVideo(const QString& targetId = QString());
+    QString startTargetId() const { return startTargetId_; }  // 開啟網址裡的抖音影片 ID（沒有是空字串）
+    bool lastQueryTargetHit() const { return lastTargetHit_; } // 上一次 queryPlayingVideo 找到指定 ID 那支的長度
+    QJsonObject lastPost() const { return lastPost_; }       // 上一次 queryPlayingVideo 讀到的圖文貼文（{slides:[{key,src}], music}）；不是圖文是空的
     bool lastQueryPlaying() const { return lastPlaying_; }   // 上一次 queryPlayingVideo 讀到的那支是不是真的在播（沒暫停、播了一點）
     void closeBrowser();   // 關掉整個瀏覽器（自動擷取成功後用；獨立設定檔的登入資訊會留著）
 
@@ -68,6 +72,10 @@ private:
     QString startUrl_;      // 連上之後才導向，避免頁面在開始監聽前就載完而漏掉請求
     bool navigated_ = false;
     bool lastPlaying_ = false;
+    bool lastTargetHit_ = false;
+    QString startTargetId_;
+    QString queryTargetId_;
+    QJsonObject lastPost_;
     QHash<QString, MediaCandidate> seen_;
     QHash<QString, QString> sessions_;           // sessionId -> 目標類型（page、iframe、worker…）
     QHash<int, bool> pendingEval_;               // 還在等結果的 Runtime.evaluate
@@ -92,6 +100,8 @@ private:
     void openBrowser();
     void addCandidate(const MediaCandidate& c);
     QList<MediaCandidate> pickCandidates() const;
+    bool slideshowParts(QList<MediaCandidate>* slides, MediaCandidate* music) const;   // 抖音圖文貼文
+    QString makeSlideshow(const QList<MediaCandidate>& slides, const QString& audio);
     void downloadCaptured();
     void beginDownloads();
     void startAuto();
@@ -147,6 +157,9 @@ private:
     bool cancelled_ = false;
     double targetDuration_ = -1;   // 使用者正在看的那支影片的長度（秒）；-1 = 不知道
     bool browserOpen_ = false;
+    QJsonObject post_;                // 頁面說目前這一篇是圖文貼文時的圖片與音樂（見 CaptureSession::lastPost）
+    QString postSig_;
+    bool slideMode_ = false;          // 這一輪下載是抖音圖文貼文：下載音樂後與圖片合成 mp4
     bool noImpersonate_ = false;      // 這個 yt-dlp 不能偽裝成瀏覽器：之後都不帶 --impersonate
 };
 

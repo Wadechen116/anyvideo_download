@@ -28,6 +28,8 @@
 #include <QUrlQuery>
 #include <QVBoxLayout>
 
+#include <functional>
+
 namespace avd {
 
 namespace {
@@ -146,6 +148,13 @@ bool CaptureSession::start(const QString& startUrl, QString* error)
     seen_.clear();          // 新的一輪：上一輪的偵測結果與頁面連線都不算
     sessions_.clear();
     pendingEval_.clear();
+    posts_.clear();
+    jsonReqs_.clear();
+    jsonSeen_.clear();
+    bodyReqs_.clear();
+    lastActiveId_.clear();
+    // 抖音（含 v.douyin.com 短連結）：網址沒有 ID 時，轉址後的網址第一次出現 ID 就固定下來（見 onMessage）
+    startIsDouyin_ = platformOf(QUrl(startUrl.trimmed())) == Platform::Douyin;
     // 抖音網址帶影片 ID（/video/ID、?modal_id=ID）：自動擷取只認這支。帳號開著自動連播時，短影片播完頁面就換下一支，
     // 網址的 modal_id 和「目前這一篇」容器都會跟著變，所以在開始時就固定下來。
     startTargetId_ = douyinVideoId(QUrl(startUrl.trimmed()));
@@ -157,6 +166,115 @@ bool CaptureSession::start(const QString& startUrl, QString* error)
     emit status(QStringLiteral("正在開啟瀏覽器…"));
     timer_.start();
     return true;
+}
+
+QString douyinFileKey(const QString& url)
+{
+    static const QRegularExpression re(QStringLiteral("/video/tos/(.+?)/?$"));
+    const auto m = re.match(QUrl(url).path());
+    return m.hasMatch() ? m.captured(1) : QString();
+}
+
+// 抖音的 aweme 物件 → DouyinPost。影片：所有畫質的檔案身分、最高畫質那個檔案；圖文：圖片（依順序）與音樂。
+static bool parseAweme(const QJsonObject& o, DouyinPost* p)
+{
+    const QJsonValue idv = o.value("aweme_id");
+    if (!idv.isString()) return false;                 // 數字型別的 ID 轉 double 會失去精度，不採用
+    p->id = idv.toString();
+    if (p->id.isEmpty()) return false;
+    const QJsonObject video = o.value("video").toObject();
+    double ms = video.value("duration").toDouble(-1);
+    if (ms <= 0) ms = o.value("duration").toDouble(-1);
+    p->duration = ms > 0 ? ms / 1000.0 : -1;
+    // 影片底下所有網址（各畫質、h264／h265、下載用）都算這篇的檔案
+    std::function<void(const QJsonValue&, int)> walk = [&](const QJsonValue& v, int depth) {
+        if (depth > 8) return;
+        if (v.isString()) {
+            if (const QString k = douyinFileKey(v.toString()); !k.isEmpty()) p->fileKeys.insert(k);
+        } else if (v.isArray()) {
+            for (const auto& x : v.toArray()) walk(x, depth + 1);
+        } else if (v.isObject()) {
+            const QJsonObject ob = v.toObject();
+            for (auto it = ob.begin(); it != ob.end(); ++it) walk(it.value(), depth + 1);
+        }
+    };
+    walk(video, 0);
+    // 最高畫質：解析度最大，同解析度取位元率最高
+    auto consider = [&](const QJsonObject& addr, double bitrate) {
+        QString url;
+        for (const auto& u : addr.value("url_list").toArray())
+            if (u.toString().startsWith(QLatin1String("https://")) && !douyinFileKey(u.toString()).isEmpty()) { url = u.toString(); break; }
+        if (url.isEmpty()) return;
+        const int w = addr.value("width").toInt(), h = addr.value("height").toInt();
+        const double pixels = double(w) * h, bestPixels = double(p->width) * p->height;
+        if (!p->best.url.isEmpty() && (pixels < bestPixels || (pixels == bestPixels && bitrate <= p->bitrate))) return;
+        p->best.url = url;
+        p->best.kind = QStringLiteral("video");
+        p->best.mime = QStringLiteral("video/mp4");
+        p->best.referer = QStringLiteral("https://www.douyin.com/");
+        const double bytes = addr.value("data_size").toDouble(-1);
+        p->best.size = bytes > 0 ? qint64(bytes) : -1;
+        p->width = w;
+        p->height = h;
+        p->bitrate = bitrate;
+    };
+    for (const auto& b : video.value("bit_rate").toArray())
+        consider(b.toObject().value("play_addr").toObject(), b.toObject().value("bit_rate").toDouble());
+    if (p->best.url.isEmpty()) consider(video.value("play_addr").toObject(), 0);
+    // 圖文貼文
+    QJsonArray slides;
+    for (const auto& iv : o.value("images").toArray()) {
+        QString src;
+        for (const auto& u : iv.toObject().value("url_list").toArray())
+            if (u.toString().startsWith(QLatin1String("http"))) { src = u.toString(); break; }
+        if (!src.isEmpty()) slides << QJsonObject{{"key", QUrl(src).path().section('~', 0, 0)}, {"src", src}};
+    }
+    if (!slides.isEmpty()) {
+        QString music;
+        for (const auto& u : o.value("music").toObject().value("play_url").toObject().value("url_list").toArray())
+            if (u.toString().startsWith(QLatin1String("http"))) { music = u.toString(); break; }
+        p->post = QJsonObject{{"slides", slides}, {"music", music}};
+    }
+    return !p->fileKeys.isEmpty() || !p->post.isEmpty();
+}
+
+void CaptureSession::collectAwemes(const QJsonValue& v, int depth)
+{
+    if (depth > 12) return;
+    if (v.isArray()) {
+        for (const auto& x : v.toArray()) collectAwemes(x, depth + 1);
+        return;
+    }
+    if (!v.isObject()) return;
+    const QJsonObject o = v.toObject();
+    DouyinPost p;
+    if (o.contains("aweme_id") && (o.contains("video") || o.contains("images")) && parseAweme(o, &p)) {
+        if (!posts_.contains(p.id) && posts_.size() >= 5000) return;   // 上限：一頁不會有這麼多篇
+        DouyinPost& old = posts_[p.id];
+        // 同一篇在不同回應出現：檔案身分合併；最高畫質取兩邊較好的（同畫質用新的網址，簽章較新）；缺的欄位保留舊值
+        p.fileKeys.unite(old.fileKeys);
+        const double np = double(p.width) * p.height, op = double(old.width) * old.height;
+        if (!old.best.url.isEmpty() && (p.best.url.isEmpty() || np < op || (np == op && p.bitrate < old.bitrate))) {
+            p.best = old.best;
+            p.width = old.width;
+            p.height = old.height;
+            p.bitrate = old.bitrate;
+        }
+        if (p.duration <= 0) p.duration = old.duration;
+        if (p.post.isEmpty()) p.post = old.post;
+        old = p;
+        return;
+    }
+    for (auto it = o.begin(); it != o.end(); ++it)
+        if (it.value().isObject() || it.value().isArray()) collectAwemes(it.value(), depth + 1);
+}
+
+void CaptureSession::parseDouyinJson(const QByteArray& body)
+{
+    QJsonParseError err;
+    const QJsonDocument doc = QJsonDocument::fromJson(body, &err);
+    if (err.error != QJsonParseError::NoError) return;
+    collectAwemes(doc.isArray() ? QJsonValue(doc.array()) : QJsonValue(doc.object()), 0);
 }
 
 void CaptureSession::stop()
@@ -177,6 +295,7 @@ void CaptureSession::queryPlayingVideo(const QString& targetId)
     videos_.clear();
     pendingEval_.clear();
     queryTargetId_ = targetId;
+    lastActiveId_.clear();   // 每次查詢重新取得；查不到（逾時、沒有回覆）就是空的，不沿用上一篇
     // 除了 <video> 的狀態，也一併問頁面「目前這一篇」是不是抖音圖文貼文：圖片依頁面順序、背景音樂網址。
     // 音樂本身也是個 <video>，頁面還會預載別篇的影片與圖片，只看網路請求或 <video> 會抓錯。
     // 「這一篇」的容器：有指定抖音影片 ID 時是帶 data-e2e-vid=ID 的容器（不管它是不是正在播放，播完換下一支後仍留在頁面上）；
@@ -190,7 +309,8 @@ const v=[...document.querySelectorAll('video')].map(v=>[Number.isFinite(v.durati
 if(r){const key=u=>{try{return new URL(u).pathname.split('~')[0]}catch(e){return ''}};const seen=new Set(),slides=[];
 r.querySelectorAll('img').forEach(i=>{if(/aweme-images/.test(i.src)&&!seen.has(key(i.src))){seen.add(key(i.src));slides.push({key:key(i.src),src:i.src})}});
 const m=[...r.querySelectorAll('video,audio')].map(v=>v.currentSrc||v.src||'').find(u=>/^https?:/.test(u))||'';post={slides:slides,music:m}}
-return {v:v,post:post}})()))JS");
+const fa=document.querySelector('[data-e2e="feed-active-video"]');
+return {v:v,post:post,act:fa?(fa.getAttribute('data-e2e-vid')||''):'',href:location.href}})()))JS");
     static const QRegularExpression digits(QStringLiteral("^\\d*$"));
     expression = expression.arg(digits.match(targetId).hasMatch() ? targetId : QString());
     for (auto it = sessions_.constBegin(); it != sessions_.constEnd(); ++it) {
@@ -253,7 +373,9 @@ void CaptureSession::onMessage(const QString& text)
     // 播放影片時瀏覽器會每秒送上千則 dataReceived 之類的事件；不是要用的就連 JSON 都不解析，
     // 否則介面執行緒被塞滿，視窗會卡到按不動。
     const bool wanted = text.contains(QLatin1String("\"id\":")) || text.contains(QLatin1String("Network.responseReceived\"")) ||
-                        text.contains(QLatin1String("Target.attachedToTarget"));
+                        text.contains(QLatin1String("Target.attachedToTarget")) ||
+                        (!jsonReqs_.isEmpty() && (text.contains(QLatin1String("Network.loadingFinished\"")) ||
+                                                  text.contains(QLatin1String("Network.loadingFailed\""))));
     if (!wanted) return;
     const QJsonObject m = QJsonDocument::fromJson(text.toUtf8()).object();
     if (m.value("id").toInt() == getTargetsId_ && getTargetsId_ != 0) {
@@ -262,6 +384,14 @@ void CaptureSession::onMessage(const QString& text)
             if (info.value("type").toString() == "page")
                 send("Target.attachToTarget", {{"targetId", info.value("targetId").toString()}, {"flatten", true}});
         }
+        return;
+    }
+    if (const int rid = m.value("id").toInt(); bodyReqs_.contains(rid)) {         // 抖音資料的內容
+        bodyReqs_.remove(rid);
+        const QJsonObject r = m.value("result").toObject();
+        QByteArray body = r.value("body").toString().toUtf8();
+        if (r.value("base64Encoded").toBool()) body = QByteArray::fromBase64(body);
+        if (body.size() <= 64LL * 1024 * 1024) parseDouyinJson(body);   // 讀不到（錯誤回覆）或異常大就略過：之後退回用長度判斷
         return;
     }
     if (const int rid = m.value("id").toInt(); pendingEval_.contains(rid)) {      // Runtime.evaluate 的結果
@@ -274,6 +404,16 @@ void CaptureSession::onMessage(const QString& text)
             if (row.size() >= 5) videos_ << row;
         }
         if (lastPost_.isEmpty() && !reply.value("post").toObject().value("slides").toArray().isEmpty()) lastPost_ = reply.value("post").toObject();
+        // 頁面目前顯示的那篇：只採信主頁面（iframe 不是抖音的貼文頁）
+        const bool fromPage = sessions_.value(m.value("sessionId").toString()) == QLatin1String("page");
+        if (const QString act = reply.value("act").toString(); fromPage && !act.isEmpty() && lastActiveId_.isEmpty()) lastActiveId_ = act;
+        if (startTargetId_.isEmpty() && startIsDouyin_) {
+            // 短連結轉址到 /video/ID（或 modal_id=ID）：第一次看到就固定，之後自動連播換片也不改
+            if (const QString id = douyinVideoId(QUrl(reply.value("href").toString())); !id.isEmpty()) {
+                startTargetId_ = id;
+                emit status(QStringLiteral("從轉址後的網址取得抖音影片 ID：") + id);
+            }
+        }
         if (pendingEval_.isEmpty()) finishQuery();
         return;
     }
@@ -289,9 +429,32 @@ void CaptureSession::onMessage(const QString& text)
             navigated_ = true;
             send("Page.navigate", {{"url", startUrl_}}, sid);
         }
+    } else if (method == "Network.loadingFinished" || method == "Network.loadingFailed") {
+        const QString reqId = params.value("requestId").toString();
+        if (!jsonReqs_.contains(reqId)) return;
+        const QString sid = jsonReqs_.take(reqId);
+        if (method == "Network.loadingFailed") return;
+        // 只讀可能含貼文清單的回應：貼文資料動輒數十 KB，設定、表情、計數之類的小回應不讀。
+        // 讀回應內容和查詢頁面都要排在網頁主執行緒上，一次讀太多會讓查詢慢好幾秒。異常大的也不讀。
+        const double len = params.value("encodedDataLength").toDouble();
+        if (len < 4096 || len > 32.0 * 1024 * 1024) return;
+        bodyReqs_.insert(nextId_, reqId);
+        send("Network.getResponseBody", {{"requestId", reqId}}, sid);
     } else if (method == "Network.responseReceived") {
         const QJsonObject resp = params.value("response").toObject();
         const QString mime = resp.value("mimeType").toString();
+        {
+            // 抖音頁面自己抓的貼文資料（推薦、作品列表、詳情…）：下載完再讀內容，用來把影片 ID 對應到它的檔案
+            const QUrl ru(resp.value("url").toString());
+            const QString reqId = params.value("requestId").toString();
+            const QString host = ru.host().toLower();
+            if ((host == QLatin1String("douyin.com") || host.endsWith(QLatin1String(".douyin.com"))) && ru.path().contains(QLatin1String("/aweme/")) && mime.contains(QLatin1String("json")) &&
+                resp.value("status").toInt() < 400 && !reqId.isEmpty() && !jsonSeen_.contains(reqId) && jsonSeen_.size() < 20000) {
+                jsonSeen_.insert(reqId);
+                jsonReqs_.insert(reqId, m.value("sessionId").toString());
+                return;
+            }
+        }
         const QString kind = candidateKind(resp.value("url").toString(), mime);
         if (kind.isEmpty() || resp.value("status").toInt() >= 400) return;
 
@@ -477,6 +640,9 @@ static double urlDuration(const QString& url)
 // 同一張圖會以不同尺寸（~tplv-… 後綴不同）、不同簽章重複請求，用檔案路徑 ~ 之前的部分當身分。
 bool CaptureDialog::slideshowParts(QList<MediaCandidate>* slides, MediaCandidate* music) const
 {
+    // 有這篇的貼文資料：只有資料說是圖文、而且有音樂時才是圖文（不從網路偵測猜，也不拿別篇的音樂）
+    const bool verified = session_ && session_->hasDouyinPost(pickId_);
+    if (verified && (post_.value("slides").toArray().isEmpty() || post_.value("music").toString().isEmpty())) return false;
     QList<MediaCandidate> all = candidates_.values();
     std::sort(all.begin(), all.end(), [](const MediaCandidate& a, const MediaCandidate& b) { return a.seq < b.seq; });
     // 頁面說目前這一篇是圖文貼文：用頁面上的圖片網址（高解析版、簽章完整）與音樂，不管偵測到什麼影片（多半是預載的別篇）
@@ -612,6 +778,25 @@ QList<MediaCandidate> CaptureDialog::pickCandidates() const
     MediaCandidate music;
     if (slideshowParts(&slides, &music)) return {music};       // 圖文貼文：只下載音樂，圖片在 finish() 取得
     all.removeIf([](const MediaCandidate& c) { return c.kind == "slide"; });
+    // 抖音：有這篇的貼文資料，就只下載屬於它的檔案（資料裡最高畫質的那個，加上偵測到、身分相符的），不靠長度猜
+    if (session_ && session_->hasDouyinPost(pickId_)) {
+        const DouyinPost p = session_->douyinPost(pickId_);
+        QList<MediaCandidate> mine;
+        QSet<QString> keys;
+        if (!p.best.url.isEmpty()) {
+            mine << p.best;
+            keys.insert(douyinFileKey(p.best.url));
+        }
+        for (const auto& c : all) {
+            const QString k = douyinFileKey(c.url);
+            if (!k.isEmpty() && p.fileKeys.contains(k) && !keys.contains(k)) {
+                keys.insert(k);
+                mine << c;
+            }
+        }
+        while (mine.size() > 4) mine.removeLast();
+        return mine;   // 空的也不退回其他候選：寧可不下載，也不混進別篇的檔案
+    }
     for (const auto& c : all)
         if (c.kind == "stream") return {c};
     if (targetDuration_ > 0) {
@@ -636,6 +821,7 @@ void CaptureDialog::startAuto()
     queryInFlight_ = false;
     post_ = QJsonObject();
     postSig_.clear();
+    pickId_.clear();
     autoClock_.start();
     lblStatus_->setText(QStringLiteral("自動擷取：等待網頁開始播放影片…"));
     autoTimer_.start();
@@ -650,14 +836,31 @@ void CaptureDialog::autoTick()
             autoFallback(QStringLiteral("一直沒有偵測到正在播放的影片，多半是需要登入或驗證：請在瀏覽器視窗操作（登入後播放影片），再按「下載擷取到的影片」。"));
             return;
         }
+        // 已經拿到網址指定那篇的貼文資料：長度、檔案網址（或圖文的圖片與音樂）都有了，不必等播放，直接下載
+        if (session_ && session_->hasDouyinPost(session_->startTargetId())) {
+            const DouyinPost p = session_->douyinPost(session_->startTargetId());
+            if (!p.best.url.isEmpty() || !p.post.isEmpty()) {
+                pickId_ = p.id;
+                targetDuration_ = p.post.isEmpty() ? p.duration : -1;
+                if (p.post.isEmpty()) log(QStringLiteral("從抖音貼文資料鎖定影片 %1：%2 秒").arg(p.id).arg(p.duration, 0, 'f', 2));
+                autoTimer_.stop();
+                autoState_ = 0;
+                autoRun_ = true;
+                beginDownloads();
+                return;
+            }
+        }
         // 有指定抖音影片 ID 就不等偵測到影音才問：網路偵測常比實際播放晚好幾秒，短影片可能已經播完換下一支
-        if (queryInFlight_ || !session_ || (candidates_.isEmpty() && session_->startTargetId().isEmpty())) return;
+        // （抖音短連結還沒取得 ID 時也先問：轉址後的網址會帶 ID）
+        if (queryInFlight_ || !session_ || (candidates_.isEmpty() && session_->startTargetId().isEmpty() && !session_->startIsDouyin())) return;
         queryInFlight_ = true;
         connect(session_, &CaptureSession::playingVideo, this, [this](double d) {
             queryInFlight_ = false;
             if (autoState_ != 1) return;
             // 抖音圖文貼文：頁面說目前這篇有圖片就不再看其他影片（音樂也是 <video>，別篇預載的影片也可能「正在播放」）；圖片清單穩定一陣子就開始
             post_ = session_->lastPost();
+            // 先綁定網址指定的 ID：這篇的貼文資料若已到（可能在查詢途中才到），圖文判斷就以資料為準（見 slideshowParts）
+            pickId_ = session_->startTargetId();
             if (!post_.value("slides").toArray().isEmpty()) {
                 const QString sig = QString::fromUtf8(QJsonDocument(post_.value("slides").toArray()).toJson(QJsonDocument::Compact));
                 if (sig != postSig_) { postSig_ = sig; settleClock_.start(); }
@@ -683,6 +886,14 @@ void CaptureDialog::autoTick()
         }, Qt::SingleShotConnection);
         session_->queryPlayingVideo(session_->startTargetId());
     } else if (autoState_ == 2) {
+        // 等候期間拿到了這篇的貼文資料：檔案網址已知，不必再等網路偵測
+        if (session_ && session_->hasDouyinPost(pickId_) && !session_->douyinPost(pickId_).best.url.isEmpty()) {
+            autoTimer_.stop();
+            autoState_ = 0;
+            autoRun_ = true;
+            beginDownloads();
+            return;
+        }
         // 鎖定可能早於偵測到任何影音（有指定 ID 時不等候選就先問）：至少要有一個候選，才開始算「穩定」
         if (candidates_.isEmpty()) {
             if (autoClock_.elapsed() > kAutoWaitSeconds * 1000)
@@ -762,6 +973,7 @@ void CaptureDialog::downloadCaptured()
     autoRun_ = false;
     targetDuration_ = -1;
     post_ = QJsonObject();
+    pickId_.clear();
     btnDownload_->setEnabled(false);
     if (session_ && browserOpen_) {
         // 先問瀏覽器：現在在播的是哪一支（長度幾秒）。Facebook 等網站會預先載入下一支，要靠長度把它們分開。
@@ -769,6 +981,7 @@ void CaptureDialog::downloadCaptured()
         connect(session_, &CaptureSession::playingVideo, this, [this](double d) {
             targetDuration_ = d;
             post_ = session_->lastPost();
+            pickId_ = session_->lastActiveId();   // 手動：使用者按下載時頁面顯示的那篇
             log(d > 0 ? QStringLiteral("正在播放的影片長度：%1 秒").arg(d, 0, 'f', 1) : QStringLiteral("讀不到正在播放的影片長度，改用偵測順序判斷"));
             beginDownloads();
         }, Qt::SingleShotConnection);
@@ -780,9 +993,25 @@ void CaptureDialog::downloadCaptured()
 
 void CaptureDialog::beginDownloads()
 {
+    if (session_ && session_->hasDouyinPost(pickId_)) {
+        // 有這篇的貼文資料：是不是圖文、有哪些圖片與音樂，以資料為準（頁面上的判斷可能是別篇）
+        const DouyinPost p = session_->douyinPost(pickId_);
+        post_ = p.post;
+        log(p.post.isEmpty() ? QStringLiteral("抖音影片 %1：依貼文資料只下載屬於它的檔案（最高畫質 %2×%3）").arg(pickId_).arg(p.width).arg(p.height)
+                             : QStringLiteral("抖音圖文 %1：依貼文資料取 %2 張圖片與音樂").arg(pickId_).arg(p.post.value("slides").toArray().size()));
+    } else if (!pickId_.isEmpty()) {
+        log(QStringLiteral("沒有取得抖音影片 %1 的貼文資料，改用長度判斷").arg(pickId_));
+    }
     slideMode_ = slideshowParts(nullptr, nullptr);
     queue_ = pickCandidates();
-    if (queue_.isEmpty()) return;
+    if (queue_.isEmpty()) {
+        const QString msg = session_ && session_->hasDouyinPost(pickId_)
+                                ? QStringLiteral("抖音貼文 %1 的資料裡沒有可下載的影片（或圖文缺音樂），沒有下載別篇的檔案。可在瀏覽器裡播放後再按「下載擷取到的影片」。").arg(pickId_)
+                                : QStringLiteral("沒有可下載的影音。");
+        if (autoRun_) autoFallback(msg);
+        else { lblStatus_->setText(msg); log(msg); updateButtons(); }
+        return;
+    }
     QDir().mkpath(outDir_);
     qDeleteAll(items_);
     items_.clear();
@@ -1026,6 +1255,14 @@ void CaptureDialog::finish()
     report(out);
 }
 
+// 測試用：讓事件迴圈跑 ms 毫秒
+static void waitEvents(int ms)
+{
+    QEventLoop loop;
+    QTimer::singleShot(ms, &loop, &QEventLoop::quit);
+    loop.exec();
+}
+
 bool CaptureDialog::selfTestLive(const QString& url, const QString& png)
 {
     show();
@@ -1033,8 +1270,7 @@ bool CaptureDialog::selfTestLive(const QString& url, const QString& png)
     if (qEnvironmentVariableIntValue("AVD_AUTO") > 0) {   // 測自動擷取：等到狀態出現「完成：」或停在手動
         btnAuto_->click();
         for (int i = 0; i < 1200 && (autoState_ != 0 || running_ > 0 || autoRun_); ++i) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-            QThread::msleep(50);
+            waitEvents(50);   // 讓事件迴圈照常跑（不要睡眠：瀏覽器的訊息會積壓，查詢回覆跟著延遲好幾秒）
         }
         grab().save(png);
         QFile f(png + ".txt");
@@ -1043,20 +1279,17 @@ bool CaptureDialog::selfTestLive(const QString& url, const QString& png)
     }
     btnOpen_->click();
     for (int i = 0; i < 300 && candidates_.isEmpty(); ++i) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(50);
+        waitEvents(50);   // 讓事件迴圈照常跑（不要睡眠：瀏覽器的訊息會積壓，查詢回覆跟著延遲好幾秒）
     }
     const int extra = qEnvironmentVariableIntValue("AVD_WAIT_SECS");
     for (int i = 0; i < (extra > 0 ? extra * 20 : 60) && !candidates_.isEmpty(); ++i) {   // 再等幾秒，讓影像與聲音都出現
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        QThread::msleep(50);
+        waitEvents(50);   // 讓事件迴圈照常跑（不要睡眠：瀏覽器的訊息會積壓，查詢回覆跟著延遲好幾秒）
     }
     bool ok = btnDownload_->isEnabled();
     if (ok) {   // 一路測到下載完成
         btnDownload_->click();
         for (int i = 0; i < 600 && (running_ > 0 || lblStatus_->text().startsWith(QStringLiteral("下載")) || lblStatus_->text().startsWith(QStringLiteral("讀取"))); ++i) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-            QThread::msleep(50);
+            waitEvents(50);   // 讓事件迴圈照常跑（不要睡眠：瀏覽器的訊息會積壓，查詢回覆跟著延遲好幾秒）
         }
         ok = lblStatus_->text().startsWith(QStringLiteral("完成："));
     }

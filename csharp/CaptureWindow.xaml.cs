@@ -137,7 +137,9 @@ public partial class CaptureWindow : Window
                 t => Dispatcher.BeginInvoke(() => Log(t)),
                 p => Dispatcher.BeginInvoke(() => Bar.Value = Math.Clamp(p, 0, 100)),
                 t => Dispatcher.BeginInvoke(() => LblStatus.Text = t),
-                _cts.Token, _session is not null && _browserOpen ? _session.LastPost : null);
+                _cts.Token, _session is not null && _browserOpen ? _session.LastPost : null,
+                // 手動：使用者按下載時頁面顯示的那篇；有它的抖音貼文資料就只下載屬於它的檔案
+                _session is not null && _browserOpen ? _session.GetDouyinPost(_session.LastActiveId) : null);
             Bar.Value = path is null ? 0 : 100;
             LblStatus.Text = path is not null ? "完成：" + path : _cts.IsCancellationRequested ? "已停止。" : "沒有下載到任何檔案，原因見下方紀錄。";
         }

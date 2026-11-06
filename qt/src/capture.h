@@ -8,6 +8,7 @@
 #include <QHash>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QSet>
 #include <QStringList>
 #include <QTimer>
 #include <QUrl>
@@ -36,6 +37,21 @@ QString findBrowser();                                   // Chrome → Edge；�
 QString candidateKind(const QString& url, const QString& mime);  // 不是影音回傳空字串
 QUrl cleanMediaUrl(const QUrl& url);
 
+// 抖音影片檔的身分：網址裡 /video/tos/ 之後到 ? 之前的路徑（同一個檔案在不同 CDN 主機、不同簽章下都一樣）。不是抖音影片檔回傳空字串。
+QString douyinFileKey(const QString& url);
+
+// 抖音頁面自己抓的資料（/aweme/v1/web/… 回應裡的 aweme 物件）中的一篇貼文。用影片 ID 對應出「屬於這篇的檔案」，
+// 不靠長度猜（不同影片長度可能一樣）。
+struct DouyinPost {
+    QString id;
+    double duration = -1;        // 秒；不知道是 -1
+    QSet<QString> fileKeys;      // 這篇所有畫質的影片檔身分（douyinFileKey）
+    MediaCandidate best;         // 最高畫質的影片檔（解析度最大、同解析度位元率最高）；url 空表示沒有
+    int width = 0, height = 0;   // best 的解析度
+    double bitrate = 0;          // best 的位元率（同解析度時比較用）
+    QJsonObject post;            // 圖文貼文：{slides:[{key,src}], music}（依貼文順序）；不是圖文是空的
+};
+
 // 單一瀏覽器的 DevTools 連線，只負責找出影音網址。
 class CaptureSession : public QObject {
     Q_OBJECT
@@ -48,6 +64,10 @@ public:
     void queryPlayingVideo(const QString& targetId = QString());
     QString startTargetId() const { return startTargetId_; }  // 開啟網址裡的抖音影片 ID（沒有是空字串）
     bool lastQueryTargetHit() const { return lastTargetHit_; } // 上一次 queryPlayingVideo 找到指定 ID 那支的長度
+    bool startIsDouyin() const { return startIsDouyin_; }      // 開啟的是抖音網址（含沒有 ID 的短連結）
+    QString lastActiveId() const { return lastActiveId_; }     // 上一次查詢時頁面目前顯示那篇的抖音 ID（feed-active-video）；沒有是空字串
+    bool hasDouyinPost(const QString& id) const { return !id.isEmpty() && posts_.contains(id); }
+    DouyinPost douyinPost(const QString& id) const { return posts_.value(id); }
     QJsonObject lastPost() const { return lastPost_; }       // 上一次 queryPlayingVideo 讀到的圖文貼文（{slides:[{key,src}], music}）；不是圖文是空的
     bool lastQueryPlaying() const { return lastPlaying_; }   // 上一次 queryPlayingVideo 讀到的那支是不是真的在播（沒暫停、播了一點）
     void closeBrowser();   // 關掉整個瀏覽器（自動擷取成功後用；獨立設定檔的登入資訊會留著）
@@ -61,6 +81,8 @@ private:
     void poll();
     void send(const QString& method, const QJsonObject& params = QJsonObject(), const QString& sessionId = {});
     void onMessage(const QString& text);
+    void parseDouyinJson(const QByteArray& body);
+    void collectAwemes(const QJsonValue& v, int depth);
 
     QNetworkAccessManager nam_;
     QWebSocket ws_;
@@ -75,6 +97,12 @@ private:
     bool lastTargetHit_ = false;
     QString startTargetId_;
     QString queryTargetId_;
+    bool startIsDouyin_ = false;
+    QString lastActiveId_;
+    QHash<QString, DouyinPost> posts_;           // 抖音影片 ID -> 貼文資料
+    QHash<QString, QString> jsonReqs_;           // 等下載完的抖音資料請求：requestId -> sessionId
+    QSet<QString> jsonSeen_;                     // 已處理過的 requestId（同一頁可能連上兩次，事件會重複）
+    QHash<int, QString> bodyReqs_;               // Network.getResponseBody 的指令 id -> requestId
     QJsonObject lastPost_;
     QHash<QString, MediaCandidate> seen_;
     QHash<QString, QString> sessions_;           // sessionId -> 目標類型（page、iframe、worker…）
@@ -160,6 +188,7 @@ private:
     QJsonObject post_;                // 頁面說目前這一篇是圖文貼文時的圖片與音樂（見 CaptureSession::lastPost）
     QString postSig_;
     bool slideMode_ = false;          // 這一輪下載是抖音圖文貼文：下載音樂後與圖片合成 mp4
+    QString pickId_;                  // 這一輪要的抖音影片 ID：有它的貼文資料時只下載屬於它的檔案；空 = 不知道
     bool noImpersonate_ = false;      // 這個 yt-dlp 不能偽裝成瀏覽器：之後都不帶 --impersonate
 };
 

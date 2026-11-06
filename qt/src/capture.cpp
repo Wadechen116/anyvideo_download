@@ -296,6 +296,7 @@ void CaptureSession::queryPlayingVideo(const QString& targetId)
     pendingEval_.clear();
     queryTargetId_ = targetId;
     lastActiveId_.clear();   // 每次查詢重新取得；查不到（逾時、沒有回覆）就是空的，不沿用上一篇
+    queryHref_.clear();
     // 除了 <video> 的狀態，也一併問頁面「目前這一篇」是不是抖音圖文貼文：圖片依頁面順序、背景音樂網址。
     // 音樂本身也是個 <video>，頁面還會預載別篇的影片與圖片，只看網路請求或 <video> 會抓錯。
     // 「這一篇」的容器：有指定抖音影片 ID 時是帶 data-e2e-vid=ID 的容器（不管它是不是正在播放，播完換下一支後仍留在頁面上）；
@@ -340,6 +341,13 @@ void CaptureSession::finishQuery()
         if (v[0] > 0 && score > bestTime) { bestTime = score; duration = v[0]; lastPlaying_ = playing; }
     }
     lastTargetHit_ = !queryTargetId_.isEmpty() && duration > 0;   // 找到指定 ID 那支的長度（不一定還在播：可能已播完換下一支）
+    if (startTargetId_.isEmpty() && startIsDouyin_) {
+        // 短連結轉址到 /video/ID（或 modal_id=ID）：第一次看到就固定，之後自動連播換片也不改（只採信主頁面的網址）
+        if (const QString id = douyinVideoId(QUrl(queryHref_)); !id.isEmpty()) {
+            startTargetId_ = id;
+            emit status(QStringLiteral("從轉址後的網址取得抖音影片 ID：") + id);
+        }
+    }
     emit playingVideo(duration);
 }
 
@@ -403,17 +411,11 @@ void CaptureSession::onMessage(const QString& text)
             for (const auto& x : v.toArray()) row << x.toDouble(-1);
             if (row.size() >= 5) videos_ << row;
         }
-        if (lastPost_.isEmpty() && !reply.value("post").toObject().value("slides").toArray().isEmpty()) lastPost_ = reply.value("post").toObject();
-        // 頁面目前顯示的那篇：只採信主頁面（iframe 不是抖音的貼文頁）
+        // 頁面目前顯示的那篇、網址、圖文：主頁面的為準（iframe 不是抖音的貼文頁）
         const bool fromPage = sessions_.value(m.value("sessionId").toString()) == QLatin1String("page");
+        if ((lastPost_.isEmpty() || fromPage) && !reply.value("post").toObject().value("slides").toArray().isEmpty()) lastPost_ = reply.value("post").toObject();
         if (const QString act = reply.value("act").toString(); fromPage && !act.isEmpty() && lastActiveId_.isEmpty()) lastActiveId_ = act;
-        if (startTargetId_.isEmpty() && startIsDouyin_) {
-            // 短連結轉址到 /video/ID（或 modal_id=ID）：第一次看到就固定，之後自動連播換片也不改
-            if (const QString id = douyinVideoId(QUrl(reply.value("href").toString())); !id.isEmpty()) {
-                startTargetId_ = id;
-                emit status(QStringLiteral("從轉址後的網址取得抖音影片 ID：") + id);
-            }
-        }
+        if (const QString href = reply.value("href").toString(); fromPage && !href.isEmpty() && queryHref_.isEmpty()) queryHref_ = href;
         if (pendingEval_.isEmpty()) finishQuery();
         return;
     }
@@ -854,9 +856,12 @@ void CaptureDialog::autoTick()
         // （抖音短連結還沒取得 ID 時也先問：轉址後的網址會帶 ID）
         if (queryInFlight_ || !session_ || (candidates_.isEmpty() && session_->startTargetId().isEmpty() && !session_->startIsDouyin())) return;
         queryInFlight_ = true;
-        connect(session_, &CaptureSession::playingVideo, this, [this](double d) {
+        const QString queryId = session_->startTargetId();
+        connect(session_, &CaptureSession::playingVideo, this, [this, queryId](double d) {
             queryInFlight_ = false;
             if (autoState_ != 1) return;
+            // 短連結這次查詢才取得 ID：這次結果不是針對那篇，下一輪改用 ID 重查
+            if (queryId.isEmpty() && !session_->startTargetId().isEmpty()) return;
             // 抖音圖文貼文：頁面說目前這篇有圖片就不再看其他影片（音樂也是 <video>，別篇預載的影片也可能「正在播放」）；圖片清單穩定一陣子就開始
             post_ = session_->lastPost();
             // 先綁定網址指定的 ID：這篇的貼文資料若已到（可能在查詢途中才到），圖文判斷就以資料為準（見 slideshowParts）
@@ -884,7 +889,7 @@ void CaptureDialog::autoTick()
             settleClock_.start();
             autoClock_.start();
         }, Qt::SingleShotConnection);
-        session_->queryPlayingVideo(session_->startTargetId());
+        session_->queryPlayingVideo(queryId);
     } else if (autoState_ == 2) {
         // 等候期間拿到了這篇的貼文資料：檔案網址已知，不必再等網路偵測
         if (session_ && session_->hasDouyinPost(pickId_) && !session_->douyinPost(pickId_).best.url.isEmpty()) {
@@ -919,7 +924,9 @@ void CaptureDialog::autoVerify(const QString& path)
 {
     autoRun_ = false;
     double got = -1;
-    if (slideMode_) {   // 圖文貼文沒有「正在播放的影片」可比對長度；合成成功就算完成
+    if (slideMode_ || targetDuration_ <= 0) {
+        // 圖文貼文沒有「正在播放的影片」可比對長度；貼文資料沒有長度時檔案本身就是依資料挑的：合成／下載成功就算完成
+        if (!slideMode_) log(QStringLiteral("貼文資料沒有影片長度，略過長度比對"));
         if (session_) session_->closeBrowser();
         browserOpen_ = false;
         btnOpen_->setEnabled(true);

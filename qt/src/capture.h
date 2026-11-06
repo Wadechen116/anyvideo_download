@@ -99,6 +99,7 @@ private:
     QString queryTargetId_;
     bool startIsDouyin_ = false;
     QString lastActiveId_;
+    QString queryHref_;          // 這次查詢主頁面回報的網址（短連結轉址後取 ID 用）
     QHash<QString, DouyinPost> posts_;           // 抖音影片 ID -> 貼文資料
     QHash<QString, QString> jsonReqs_;           // 等下載完的抖音資料請求：requestId -> sessionId
     QSet<QString> jsonSeen_;                     // 已處理過的 requestId（同一頁可能連上兩次，事件會重複）

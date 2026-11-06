@@ -1,4 +1,4 @@
-// 從瀏覽器擷取 —— 網站頁面解析不了、但瀏覽器能播時使用（例如 Meta Reels、抖音、小紅書）。
+﻿// 從瀏覽器擷取 —— 網站頁面解析不了、但瀏覽器能播時使用（例如 Meta Reels、抖音、小紅書）。
 //
 // 開一個 Chrome／Edge（偵錯模式、獨立設定檔），使用者照常播放，程式透過 Chrome DevTools Protocol 監聽網路請求，找出播放器
 // 實際載入的影音網址（m3u8、mpd、mp4…），用 yt-dlp 下載（以 Chrome 身分連線，否則 fbcdn 這類 CDN 會限速），再用 ffmpeg 串流複製
@@ -187,6 +187,8 @@ public sealed class CaptureSession : IDisposable
     private readonly object _gate = new();
     private ClientWebSocket? _ws;
     private TaskCompletionSource<bool>? _evalDone;
+    private int _queryGen;                  // 查詢世代：查詢結束時封存，遲到的回覆（已不在 _pendingEval）不會再改結果
+    private string _qAct = "", _qHref = "";  // 進行中那次查詢：主頁面回報的目前那篇 ID 與網址
     private int _nextId;
     private int _getTargetsId;
     private int _port;
@@ -403,8 +405,9 @@ public sealed class CaptureSession : IDisposable
                 {
                     var r = m["result"];
                     var body = r?["body"]?.GetValue<string>() ?? "";
-                    var text = r?["base64Encoded"]?.GetValue<bool>() == true ? Encoding.UTF8.GetString(Convert.FromBase64String(body)) : body;
-                    if (text.Length <= 64 * 1024 * 1024) CollectAwemes(JsonNode.Parse(text), 0);   // 讀不到或異常大就略過：之後退回用長度判斷
+                    // 讀不到或異常大（以位元組計，和另兩版一致）就略過：之後退回用長度判斷
+                    var bytes = r?["base64Encoded"]?.GetValue<bool>() == true ? Convert.FromBase64String(body) : Encoding.UTF8.GetBytes(body);
+                    if (bytes.Length <= 64 * 1024 * 1024) CollectAwemes(JsonNode.Parse(bytes), 0);
                 }
                 catch (Exception e) when (e is System.Text.Json.JsonException or InvalidOperationException or FormatException) { }
                 return;
@@ -419,6 +422,7 @@ public sealed class CaptureSession : IDisposable
                 var value = m["result"]?["result"]?["value"]?.GetValue<string>() ?? "{}";
                 lock (_gate)
                 {
+                    if (!_pendingEval.Remove(id)) return;      // 查詢已封存（逾時結束或新查詢開始）：遲到的回覆不算
                     try
                     {
                         var reply = JsonNode.Parse(value);
@@ -426,20 +430,14 @@ public sealed class CaptureSession : IDisposable
                             if (row is JsonArray a && a.Count >= 5) _videos.Add(a.Select(x => x?.GetValue<double>() ?? -1).ToArray());
                         // 頁面目前顯示的那篇：只採信主頁面（iframe 不是抖音的貼文頁）
                         var fromPage = _sessions.GetValueOrDefault(m["sessionId"]?.GetValue<string>() ?? "") == "page";
-                        if (fromPage && LastActiveId.Length == 0 && reply?["act"]?.GetValue<string>() is { Length: > 0 } act) LastActiveId = act;
-                        if (StartTargetId.Length == 0 && StartIsDouyin &&
-                            Platforms.DouyinVideoId(reply?["href"]?.GetValue<string>() ?? "") is { Length: > 0 } hid)
-                        {
-                            StartTargetId = hid;      // 短連結轉址到 /video/ID（或 modal_id=ID）：第一次看到就固定，之後自動連播換片也不改
-                            Status?.Invoke("從轉址後的網址取得抖音影片 ID：" + hid);
-                        }
-                        if (_post is null && reply?["post"]?["slides"] is JsonArray ps && ps.Count > 0)
+                        if (fromPage && _qAct.Length == 0 && reply?["act"]?.GetValue<string>() is { Length: > 0 } act) _qAct = act;
+                        if (fromPage && _qHref.Length == 0 && reply?["href"]?.GetValue<string>() is { Length: > 0 } href) _qHref = href;
+                        if ((_post is null || fromPage) && reply?["post"]?["slides"] is JsonArray ps && ps.Count > 0)
                             _post = new PostInfo(
                                 [.. ps.Select(x => x?["src"]?.GetValue<string>() ?? "").Where(u => u != "")],
                                 reply["post"]!["music"]?.GetValue<string>() ?? "");
                     }
                     catch (Exception e) when (e is System.Text.Json.JsonException or InvalidOperationException or FormatException) { }
-                    _pendingEval.Remove(id);
                     if (_pendingEval.Count == 0) _evalDone?.TrySetResult(true);
                 }
                 return;
@@ -539,16 +537,19 @@ public sealed class CaptureSession : IDisposable
             return {v:v,post:post,act:fa?(fa.getAttribute('data-e2e-vid')||''):'',href:location.href}})())
             """;
         string[] targets;
+        int gen;
+        TaskCompletionSource<bool> done;
         lock (_gate)
         {
+            gen = ++_queryGen;
             _videos.Clear();
             _post = null;
+            _qAct = _qHref = "";
             LastActiveId = "";          // 每次查詢重新取得；查不到就是空的，不沿用上一篇
+            LastPost = null;
             _pendingEval.Clear();
-            _evalDone = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _evalDone = done = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
             targets = [.. _sessions.Where(kv => kv.Value is "page" or "iframe").Select(kv => kv.Key)];
-            foreach (var _ in targets) _pendingEval.Add(0);       // 先佔位，下面換成真正的 id
-            _pendingEval.Clear();
         }
         if (targets.Length == 0) return -1;
         var ids = targets.Select(_ => NewId()).ToArray();
@@ -558,12 +559,22 @@ public sealed class CaptureSession : IDisposable
             for (var i = 0; i < targets.Length; i++)
                 await SendAsync(ids[i], "Runtime.evaluate", new JsonObject { ["expression"] = expression, ["returnByValue"] = true }, targets[i]);
         }
-        catch (Exception e) when (e is WebSocketException or OperationCanceledException) { return -1; }
-        await Task.WhenAny(_evalDone!.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);        // 有頁面沒回應也不能一直等
+        catch (Exception e) when (e is WebSocketException or OperationCanceledException)
+        {
+            lock (_gate) if (gen == _queryGen) _pendingEval.Clear();
+            return -1;
+        }
+        await Task.WhenAny(done.Task, Task.Delay(timeoutMs)).ConfigureAwait(false);        // 有頁面沒回應也不能一直等
         double duration = -1, best = -1;
         var playingFound = false;
+        string href;
         lock (_gate)
         {
+            if (gen != _queryGen) return -1;            // 已經有更新的查詢開始了：這次的結果作廢
+            _pendingEval.Clear();                       // 封存：之後才到的回覆一律不算（回覆處理整段都在 _gate 裡）
+            LastActiveId = _qAct;
+            LastPost = _post;
+            href = _qHref;
             var haveRoot = _videos.Any(v => v.Length > 5 && v[5] >= 0);
             foreach (var v in _videos)
             {
@@ -575,7 +586,11 @@ public sealed class CaptureSession : IDisposable
         }
         LastQueryPlaying = playingFound;
         LastQueryTargetHit = t.Length > 0 && duration > 0;
-        lock (_gate) LastPost = _post;
+        if (StartTargetId.Length == 0 && StartIsDouyin && Platforms.DouyinVideoId(href) is { Length: > 0 } hid)
+        {
+            StartTargetId = hid;      // 短連結轉址到 /video/ID（或 modal_id=ID）：第一次看到就固定，之後自動連播換片也不改
+            Status?.Invoke("從轉址後的網址取得抖音影片 ID：" + hid);
+        }
         return duration;
     }
 
@@ -1039,6 +1054,7 @@ public static class CaptureRunner
             if (session.Candidates.Count > 0 || tid.Length > 0 || session.StartIsDouyin)
             {
                 var d = await session.QueryPlayingVideoAsync(2000, tid).ConfigureAwait(false);
+                if (tid.Length == 0 && session.StartTargetId.Length > 0) continue;   // 短連結這次查詢才取得 ID：這次結果不是針對那篇，改用 ID 重查
                 // 抖音圖文貼文：頁面說目前這篇有圖片就不再看其他影片（音樂也是 <video>，別篇預載的影片也可能「正在播放」）；圖片清單穩定一陣子就開始
                 if (session.LastPost is { } lp)
                 {
@@ -1056,24 +1072,13 @@ public static class CaptureRunner
         var targetId = session.StartTargetId;
         if (dp is not null)
         {
-            if (dp.Post is not null)
+            if (dp.Post is null)
             {
-                var dpPath = await DownloadAndMergeAsync(session.Candidates, -1, outDir, engine, ffmpegDir, log, progress, status, ct, douyin: dp).ConfigureAwait(false);
-                if (ct.IsCancellationRequested) return (null, "cancelled", target);
-                return dpPath is null ? (null, "failed", target) : (dpPath, "ok", target);
+                target = dp.Duration;
+                log($"從抖音貼文資料鎖定影片 {dp.Id}：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
             }
-            target = dp.Duration;
-            log($"從抖音貼文資料鎖定影片 {dp.Id}：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒");
         }
-        else if (slideshow)
-        {
-            // 頁面說是圖文；若這時已有這篇的貼文資料，以資料為準
-            var slidePath = await DownloadAndMergeAsync(session.Candidates, -1, outDir, engine, ffmpegDir, log, progress, status, ct, post,
-                                                        session.GetDouyinPost(targetId)).ConfigureAwait(false);
-            if (ct.IsCancellationRequested) return (null, "cancelled", target);
-            return slidePath is null ? (null, "failed", target) : (slidePath, "ok", target);
-        }
-        else
+        else if (!slideshow)
         {
             if (target <= 0) return (null, "manual", target);
             log(hit ? $"鎖定網址指定的抖音影片（{targetId}）長度：{target.ToString("F2", CultureInfo.InvariantCulture)} 秒"
@@ -1096,12 +1101,27 @@ public static class CaptureRunner
                 await Task.Delay(200, CancellationToken.None).ConfigureAwait(false);
             }
             if (ct.IsCancellationRequested) return (null, "cancelled", target);
-            dp = hit ? session.GetDouyinPost(targetId) : null;
-            if (hit && dp is null) log($"沒有取得抖音影片 {targetId} 的貼文資料，改用長度判斷");
+            // 有指定 ID 就一定以這篇的貼文資料為準（有就用，不靠長度挑）
+            dp = targetId.Length > 0 ? ReadyPost(targetId) : null;
+            if (targetId.Length > 0 && dp is null) log($"沒有取得抖音影片 {targetId} 的貼文資料，改用長度判斷");
+        }
+        if (dp?.Post is not null || slideshow)
+        {
+            // 圖文：依貼文資料（有的話）或頁面上的圖片合成；沒有影片長度可比對
+            var slidePath = await DownloadAndMergeAsync(session.Candidates, -1, outDir, engine, ffmpegDir, log, progress, status, ct,
+                                                        dp?.Post is not null ? null : post,
+                                                        dp ?? (targetId.Length > 0 ? session.GetDouyinPost(targetId) : null)).ConfigureAwait(false);
+            if (ct.IsCancellationRequested) return (null, "cancelled", target);
+            return slidePath is null ? (null, "failed", target) : (slidePath, "ok", target);
         }
         var path = await DownloadAndMergeAsync(session.Candidates, target, outDir, engine, ffmpegDir, log, progress, status, ct, douyin: dp).ConfigureAwait(false);
         if (ct.IsCancellationRequested) return (null, "cancelled", target);
         if (path is null) return (null, "failed", target);
+        if (target <= 0)
+        {
+            log("貼文資料沒有影片長度，略過長度比對");      // 檔案本身就是依貼文資料挑的
+            return (path, "ok", target);
+        }
         var got = (await ProbeAsync(path, ffmpegDir).ConfigureAwait(false)).Dur;
         if (got > 0 && Math.Abs(got - target) <= Math.Max(0.6, target * 0.05))
         {
